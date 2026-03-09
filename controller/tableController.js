@@ -62,8 +62,8 @@ exports.createTable = async (req, res) => {
     const status = true; // default aktif
 
     // Generate QR content: e.g. baseUrl/tables/{nextNomor} or custom
-    const baseUrl = (process.env.BASE_URL || "").replace(/\/$/, "");
-    const qrContent = `${baseUrl}/table/${nextNomor}`;
+    const clientIp = (process.env.CLIENT_IP || process.env.BASE_URL || "").replace(/\/$/, "");
+    const qrContent = `${clientIp}/user?cafe_id=${cafeId}&table=${nextNomor}`;
     let qrCodeDataUrl = null;
     try {
       qrCodeDataUrl = await QRCode.toDataURL(qrContent);

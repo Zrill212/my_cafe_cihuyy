@@ -22,30 +22,46 @@ exports.login = async (req, res) => {
   }
 
   try {
-    const rows = await query("SELECT * FROM admins WHERE email = ?", [
-      email,
-    ]);
+    const adminRows = await query("SELECT * FROM admins WHERE email = ?", [email]);
 
-    if (!rows || rows.length === 0) {
-      return sendResponse(res, 404, "Admin tidak ditemukan", [], {});
+    if (adminRows && adminRows.length > 0) {
+      const admin = adminRows[0];
+
+      const passwordOk = bcrypt.compareSync(password, admin.password);
+      if (!passwordOk) {
+        return sendResponse(res, 401, "Password salah", [], {});
+      }
+
+      const token = jwt.sign(
+        { id: admin.id, role: "admin", cafe_id: admin.cafe_id },
+        "SECRET_CAFE_KEY",
+        { expiresIn: "8h" },
+      );
+
+      const { password: _pw, ...adminSafe } = admin;
+      return sendResponse(res, 200, "Login berhasil", { token }, adminSafe);
     }
 
-    const admin = rows[0];
+    const kasirRows = await query("SELECT * FROM kasirs WHERE email = ?", [email]);
+    if (!kasirRows || kasirRows.length === 0) {
+      return sendResponse(res, 404, "User tidak ditemukan", [], {});
+    }
 
-    const passwordOk = bcrypt.compareSync(password, admin.password);
+    const kasir = kasirRows[0];
+
+    const passwordOk = bcrypt.compareSync(password, kasir.password);
     if (!passwordOk) {
       return sendResponse(res, 401, "Password salah", [], {});
     }
 
     const token = jwt.sign(
-      { id: admin.id, role: "admin", cafe_id: admin.cafe_id },
+      { id: kasir.id, role: "kasir", cafe_id: kasir.cafe_id },
       "SECRET_CAFE_KEY",
       { expiresIn: "8h" },
     );
 
-    const { password: _pw, ...adminSafe } = admin;
-
-    return sendResponse(res, 200, "Login berhasil", { token }, adminSafe);
+    const { password: _pw, ...kasirSafe } = kasir;
+    return sendResponse(res, 200, "Login berhasil", { token }, kasirSafe);
   } catch (err) {
     return sendResponse(
       res,

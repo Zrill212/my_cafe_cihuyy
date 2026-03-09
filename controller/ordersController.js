@@ -1,5 +1,6 @@
 // controllers/OrderController.js
 const db = require("../config/db");
+const QRCode = require("qrcode");
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 const sendResponse = (res, httpStatus, message, data) => {
@@ -246,17 +247,20 @@ exports.userCreate = (req, res) => {
 
       const insertNext = () => {
         if (idx >= items.length) {
-          // Semua item selesai
-          return sendResponse(res, 201, "Pesanan berhasil dibuat", {
-            id:       orderId,
-            status:   "proses",
-            waktu:    formatWaktu(),
-            tanggal:  formatTanggal(),
-            estimasi,
+          return QRCode.toDataURL(orderId, (qrErr, qrCodeDataUrl) => {
+            return sendResponse(res, 201, "Pesanan berhasil dibuat", {
+              id:       orderId,
+              status:   "proses",
+              waktu:    formatWaktu(),
+              tanggal:  formatTanggal(),
+              estimasi,
+              qr_code:  qrErr ? null : qrCodeDataUrl,
+            });
           });
         }
 
         const item     = items[idx++];
+        if (!item) return insertNext();
         const namaMenu = item.nama_menu ?? item.name ?? item.nama ?? "";
         const qty      = Number(item.qty ?? item.jumlah ?? 1);
         const harga    = Number(item.harga ?? item.price ?? 0);
@@ -323,6 +327,34 @@ exports.userGetByMeja = (req, res) => {
   });
 };
 
+// GET /api/orders/:id/status
+exports.userGetStatus = (req, res) => {
+  const orderId = req.params.id;
+
+  db.query(
+    "SELECT id, cafe_id, meja, status, total, method, created_at FROM orders WHERE id = ? LIMIT 1",
+    [orderId],
+    (err, rows) => {
+      if (err) return sendResponse(res, 500, err.message, null);
+      if (!rows || rows.length === 0) return sendResponse(res, 404, "Pesanan tidak ditemukan", null);
+
+      const o = rows[0];
+      return QRCode.toDataURL(String(o.id), (qrErr, qrCodeDataUrl) => {
+        return sendResponse(res, 200, "Berhasil mengambil status pesanan", {
+          id: o.id,
+          cafe_id: o.cafe_id,
+          meja: o.meja,
+          status: o.status,
+          total: Number(o.total ?? 0),
+          method: o.method,
+          created_at: o.created_at,
+          qr_code: qrErr ? null : qrCodeDataUrl,
+        });
+      });
+    },
+  );
+};
+
 // GET /api/orders/:id
 exports.userGetOne = (req, res) => {
   db.query(
@@ -333,7 +365,13 @@ exports.userGetOne = (req, res) => {
 
       const order = rows[0];
       fetchItems(order.id, order.cafe_id, (err2, items) => {
-        return sendResponse(res, 200, "Berhasil", formatOrder(order, items || []));
+        const payload = formatOrder(order, items || []);
+        return QRCode.toDataURL(String(order.id), (qrErr, qrCodeDataUrl) => {
+          return sendResponse(res, 200, "Berhasil", {
+            ...payload,
+            qr_code: qrErr ? null : qrCodeDataUrl,
+          });
+        });
       });
     }
   );

@@ -13,6 +13,6 @@ router.delete("/admin/:id",         auth, OrderCtrl.adminDelete);
 /* ── USER / PELANGGAN (publik) ───────────────────────────────────────────── */
 router.post  ("/",    OrderCtrl.userCreate);
 router.get   ("/",    OrderCtrl.userGetByMeja);
+router.get   ("/:id/status", OrderCtrl.userGetStatus);
 router.get   ("/:id", OrderCtrl.userGetOne);
-
 module.exports = router;

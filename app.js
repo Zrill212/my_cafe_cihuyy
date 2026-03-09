@@ -150,6 +150,12 @@ app.use('/api/orders', ordersRoutes);
 const midtransRoutes = require('./routes/midtransRoutes');
 app.use('/api/midtrans', midtransRoutes);
 
+const laporanRoutes = require('./routes/laporanRoutes');
+app.use('/api/laporan', laporanRoutes);
+
+const kasirRoutes = require('./routes/kasirRoutes');
+app.use('/api/kasir', kasirRoutes);
+
 
 
 app.listen(PORT,'0.0.0.0', () => {
