@@ -376,3 +376,75 @@ exports.userGetOne = (req, res) => {
     }
   );
 };
+
+// controller/ordersController.js
+
+exports.getOrders = async (req, res) => {
+  try {
+    const { device_id, cafe_id, meja } = req.query;
+    let query = "SELECT * FROM orders WHERE 1=1";
+    const params = [];
+
+    if (device_id) { query += " AND device_id = ?"; params.push(device_id); }
+    if (cafe_id) { query += " AND cafe_id = ?"; params.push(cafe_id); }
+    if (meja) { query += " AND meja_id = ?"; params.push(meja); }
+
+    query += " ORDER BY created_at DESC";
+
+    const [orders] = await db.execute(query, params);
+    res.json({ success: true, data: orders });
+  } catch (error) {
+    res.status(500).json({ success: false, message: error.message });
+  }
+};
+
+// PATCH /api/orders/kasir/:id/status
+// Dipanggil oleh terminal kasir — verifikasi cafe_id dari token JWT
+exports.kasirUpdateStatus = (req, res) => {
+  const { id }     = req.params;
+  const { status } = req.body;
+  const cafe_id    = req.user?.cafe_id;
+
+  // Status yang boleh diset oleh kasir
+  const allowed = ["proses", "selesai", "siap", "lunas"];
+  if (!status || !allowed.includes(status)) {
+    return res.status(400).json({
+      success: false,
+      message: `Status tidak valid. Pilihan: ${allowed.join(", ")}`,
+    });
+  }
+
+  // Cek order exist — tanpa filter cafe_id agar kasir bisa akses semua order cafe-nya
+  db.query(
+    `SELECT id, cafe_id, status FROM orders WHERE id = ? LIMIT 1`,
+    [id],
+    (err, rows) => {
+      if (err) {
+        return res.status(500).json({ success: false, message: err.message });
+      }
+      if (!rows || rows.length === 0) {
+        return res.status(404).json({ success: false, message: "Pesanan tidak ditemukan" });
+      }
+
+      // Opsional: pastikan order milik cafe yang sama dengan kasir
+      if (cafe_id && String(rows[0].cafe_id) !== String(cafe_id)) {
+        return res.status(403).json({ success: false, message: "Akses ditolak: bukan order cafe ini" });
+      }
+
+      db.query(
+        `UPDATE orders SET status = ? WHERE id = ?`,
+        [status, id],
+        (err2) => {
+          if (err2) {
+            return res.status(500).json({ success: false, message: err2.message });
+          }
+          return res.status(200).json({
+            success: true,
+            message: `Status pesanan diupdate ke '${status}'`,
+            data: { id, status },
+          });
+        }
+      );
+    }
+  );
+};
