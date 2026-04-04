@@ -2,6 +2,12 @@
 const db = require("../config/db");
 const QRCode = require("qrcode");
 const { toPublicError } = require("../utils/publicError");
+const midtransClient = require("midtrans-client");
+
+const snap = new midtransClient.Snap({
+  isProduction: String(process.env.MIDTRANS_IS_PRODUCTION || "false").toLowerCase() === "true",
+  serverKey: process.env.MIDTRANS_SERVER_KEY,
+});
 
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 const sendResponse = (res, httpStatus, message, data) => {
@@ -11,6 +17,51 @@ const sendResponse = (res, httpStatus, message, data) => {
     data,
     success: httpStatus >= 200 && httpStatus < 300,
   });
+};
+
+function mapMidtransOrderStatus(transactionStatus) {
+  if (transactionStatus === "settlement" || transactionStatus === "capture") return "paid";
+  if (transactionStatus === "pending") return "pending";
+  if (transactionStatus === "expire" || transactionStatus === "cancel" || transactionStatus === "deny") {
+    return "failed";
+  }
+  return "pending";
+}
+
+async function upsertOrderPaymentFromMidtransStatus(orderId, cafeId, midtransStatus) {
+  if (!orderId) return null;
+
+  const transactionStatus = String(midtransStatus?.transaction_status || "");
+  const mapped = mapMidtransOrderStatus(transactionStatus);
+
+  await new Promise((resolve) => {
+    db.query(
+      `INSERT INTO order_payments
+       (order_id, cafe_id, provider, status, transaction_status, payment_type, fraud_status, midtrans_transaction_id, raw_json)
+       VALUES (?, ?, 'midtrans', ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         status = VALUES(status),
+         transaction_status = VALUES(transaction_status),
+         payment_type = VALUES(payment_type),
+         fraud_status = VALUES(fraud_status),
+         midtrans_transaction_id = VALUES(midtrans_transaction_id),
+         raw_json = VALUES(raw_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        orderId,
+        cafeId || null,
+        mapped,
+        transactionStatus || null,
+        midtransStatus?.payment_type || null,
+        midtransStatus?.fraud_status || null,
+        midtransStatus?.transaction_id || null,
+        JSON.stringify(midtransStatus || {}),
+      ],
+      () => resolve(),
+    );
+  });
+
+  return mapped;
 };
 
 function generateOrderId() {
@@ -123,6 +174,67 @@ exports.adminGetMidtransBalance = (req, res) => {
   );
 };
 
+// GET /api/orders/kasir
+// List untuk terminal kasir:
+// - status=aktif => order belum selesai dan sudah dibayar (online/kasir)
+// - status=selesai => order yang sudah ditekan tandai selesai
+exports.kasirGetList = (req, res) => {
+  const cafe_id = req.user?.cafe_id;
+  if (!cafe_id) return sendResponse(res, 401, "Unauthorized", []);
+
+  const { status, limit = 200 } = req.query;
+  const maxLimit = Math.min(Number(limit || 200), 500);
+
+  let sql = `
+    SELECT o.*
+    FROM orders o
+    LEFT JOIN order_payments op ON op.order_id = o.id
+    WHERE o.cafe_id = ?`;
+  const vals = [cafe_id];
+
+  if (status === "selesai") {
+    sql += ` AND o.status = 'selesai'`;
+  } else if (status === "aktif") {
+    sql += `
+      AND o.status <> 'selesai'
+      AND (
+        (LOWER(o.method) = 'online' AND op.status = 'paid')
+        OR
+        (LOWER(o.method) = 'kasir' AND op.status = 'paid')
+      )`;
+  } else if (status) {
+    // kompatibilitas lama: proses/selesai
+    sql += ` AND o.status = ?`;
+    vals.push(status);
+  }
+
+  sql += ` ORDER BY o.created_at DESC LIMIT ?`;
+  vals.push(maxLimit);
+
+  db.query(sql, vals, (err, orders) => {
+    if (err) {
+      const pub = toPublicError(err, "Gagal mengambil data pesanan");
+      return sendResponse(res, pub.status, pub.message, []);
+    }
+    if (!orders || orders.length === 0) {
+      return sendResponse(res, 200, "Berhasil mengambil data pesanan", []);
+    }
+
+    let done = 0;
+    const result = [];
+
+    orders.forEach((o, idx) => {
+      fetchItems(o.id, cafe_id, (err2, items) => {
+        result[idx] = formatOrder(o, items || []);
+        done++;
+        if (done === orders.length) {
+          return sendResponse(res, 200, "Berhasil mengambil data pesanan", result);
+        }
+      });
+    });
+  });
+};
+
 // GET /api/orders/admin
 exports.adminGetAll = (req, res) => {
   const cafe_id = req.user.cafe_id;
@@ -208,14 +320,51 @@ exports.adminUpdateStatus = (req, res) => {
       }
 
       db.query(
-        `UPDATE orders SET status = ? WHERE id = ?`, [status, id],
-        (err2) => {
-          if (err2) {
-            const pub = toPublicError(err2, "Gagal update status");
+        `SELECT id, cafe_id, method FROM orders WHERE id = ? LIMIT 1`,
+        [id],
+        async (mErr, orderRows) => {
+          if (mErr) {
+            const pub = toPublicError(mErr, "Gagal mengambil pesanan");
             return sendResponse(res, pub.status, pub.message, null);
           }
-          return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status });
-        }
+          const order = orderRows && orderRows.length > 0 ? orderRows[0] : null;
+          if (!order) return sendResponse(res, 404, "Pesanan tidak ditemukan", null);
+
+          if (status === "selesai" && String(order.method || "").toLowerCase() === "online") {
+            if (!process.env.MIDTRANS_SERVER_KEY) {
+              return sendResponse(res, 500, "MIDTRANS_SERVER_KEY belum diset", null);
+            }
+
+            let st = null;
+            try {
+              st = await snap.transaction.status(id);
+            } catch (e) {
+              return sendResponse(res, 400, "Gagal cek status pembayaran online", {
+                reason: "midtrans_status_check_failed",
+              });
+            }
+
+            const mapped = await upsertOrderPaymentFromMidtransStatus(id, cafe_id, st);
+            if (mapped !== "paid") {
+              return sendResponse(res, 403, "Pembayaran online belum berhasil", {
+                reason: "payment_not_paid",
+                transaction_status: st?.transaction_status || null,
+              });
+            }
+          }
+
+          db.query(
+            `UPDATE orders SET status = ? WHERE id = ?`,
+            [status, id],
+            (err2) => {
+              if (err2) {
+                const pub = toPublicError(err2, "Gagal update status");
+                return sendResponse(res, pub.status, pub.message, null);
+              }
+              return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status });
+            },
+          );
+        },
       );
     }
   );
@@ -311,26 +460,40 @@ exports.userCreate = (req, res) => {
 
       const insertNext = () => {
         if (idx >= items.length) {
-          return QRCode.toDataURL(orderId, (qrErr, qrCodeDataUrl) => {
-            return sendResponse(res, 201, "Pesanan berhasil dibuat", {
-              id:       orderId,
-              status:   "proses",
-              waktu:    formatWaktu(),
-              tanggal:  formatTanggal(),
-              estimasi,
-              qr_code:  qrErr ? null : qrCodeDataUrl,
-            });
-          });
+          return db.query(
+            `INSERT INTO riwayat_pembelian (order_id, cafe_id, visitor_id, fingerprint)
+             VALUES (?, ?, ?, ?)
+             ON DUPLICATE KEY UPDATE
+               visitor_id = COALESCE(visitor_id, VALUES(visitor_id)),
+               fingerprint = COALESCE(fingerprint, VALUES(fingerprint))`,
+            [orderId, cafe_id, visitorId, fingerprint],
+            (rbErr) => {
+              if (rbErr) {
+                console.error("userCreate insert riwayat_pembelian:", rbErr);
+              }
+
+              return QRCode.toDataURL(orderId, (qrErr, qrCodeDataUrl) => {
+                return sendResponse(res, 201, "Pesanan berhasil dibuat", {
+                  id:       orderId,
+                  status:   "proses",
+                  waktu:    formatWaktu(),
+                  tanggal:  formatTanggal(),
+                  estimasi,
+                  qr_code:  qrErr ? null : qrCodeDataUrl,
+                });
+              });
+            },
+          );
         }
 
         const item     = items[idx++];
-        if (!item) return insertNext();
+        if (!item) return setImmediate(insertNext);
         const namaMenu = item.nama_menu ?? item.name ?? item.nama ?? "";
         const qty      = Number(item.qty ?? item.jumlah ?? 1);
         const harga    = Number(item.harga ?? item.price ?? 0);
         const catatan  = item.catatan ?? item.note ?? item.keterangan ?? "";
 
-        if (!namaMenu) return insertNext(); // skip item kosong
+        if (!namaMenu) return setImmediate(insertNext); // skip item kosong
 
         db.query(
           `INSERT INTO order_items (order_id, nama_menu, qty, harga, catatan)
@@ -340,20 +503,9 @@ exports.userCreate = (req, res) => {
             if (err2) {
               console.error("userCreate insert item:", err2);
               // Lanjut meski satu item gagal
-              return insertNext();
+              return setImmediate(insertNext);
             }
-
-            db.query(
-              `INSERT INTO riwayat_pembelian (visitor_id, cafe_id, fingerprint, product_id, jumlah, harga, created_at)
-               VALUES (?, ?, ?, ?, ?, ?, NOW())`,
-              [visitorId, cafe_id, fingerprint, orderId, qty, harga],
-              (err3) => {
-                if (err3) {
-                  console.error("userCreate insert riwayat_pembelian:", err3);
-                }
-                return insertNext();
-              },
-            );
+            return setImmediate(insertNext);
           },
         );
       };
@@ -517,19 +669,61 @@ exports.kasirUpdateStatus = (req, res) => {
       }
 
       db.query(
-        `UPDATE orders SET status = ? WHERE id = ?`,
-        [status, id],
-        (err2) => {
-          if (err2) {
-            const pub = toPublicError(err2, "Gagal update status");
+        `SELECT id, cafe_id, method FROM orders WHERE id = ? LIMIT 1`,
+        [id],
+        async (mErr, orderRows) => {
+          if (mErr) {
+            const pub = toPublicError(mErr, "Gagal mengambil pesanan");
             return res.status(pub.status).json({ success: false, message: pub.message });
           }
-          return res.status(200).json({
-            success: true,
-            message: `Status pesanan diupdate ke '${status}'`,
-            data: { id, status },
-          });
-        }
+          const order = orderRows && orderRows.length > 0 ? orderRows[0] : null;
+          if (!order) {
+            return res.status(404).json({ success: false, message: "Pesanan tidak ditemukan" });
+          }
+
+          if (status === "selesai" && String(order.method || "").toLowerCase() === "online") {
+            if (!process.env.MIDTRANS_SERVER_KEY) {
+              return res.status(500).json({ success: false, message: "MIDTRANS_SERVER_KEY belum diset" });
+            }
+
+            let st = null;
+            try {
+              st = await snap.transaction.status(id);
+            } catch (e) {
+              return res.status(400).json({
+                success: false,
+                message: "Gagal cek status pembayaran online",
+                reason: "midtrans_status_check_failed",
+              });
+            }
+
+            const mapped = await upsertOrderPaymentFromMidtransStatus(id, cafe_id, st);
+            if (mapped !== "paid") {
+              return res.status(403).json({
+                success: false,
+                message: "Pembayaran online belum berhasil",
+                reason: "payment_not_paid",
+                transaction_status: st?.transaction_status || null,
+              });
+            }
+          }
+
+          db.query(
+            `UPDATE orders SET status = ? WHERE id = ?`,
+            [status, id],
+            (err2) => {
+              if (err2) {
+                const pub = toPublicError(err2, "Gagal update status");
+                return res.status(pub.status).json({ success: false, message: pub.message });
+              }
+              return res.status(200).json({
+                success: true,
+                message: `Status pesanan diupdate ke '${status}'`,
+                data: { id, status },
+              });
+            },
+          );
+        },
       );
     }
   );

@@ -42,6 +42,13 @@ exports.getRiwayatPembelian = (req, res) => {
   db.query("SHOW TABLES LIKE 'riwayat_pembelian'", [], (errCheck, tableExists) => {
     const hasRiwayatTable = !errCheck && tableExists && tableExists.length > 0;
 
+    if (hasRiwayatTable && !(visitorId || fingerprint)) {
+      return sendResponse(res, 400, "Perangkat belum terverifikasi. Kirim fingerprint/visitor_id", {
+        reason: "device_unverified",
+        required: "fingerprint",
+      });
+    }
+
     if (hasRiwayatTable && (visitorId || fingerprint)) {
       // ── Query DENGAN riwayat_pembelian (join by order_id, bukan product_id) ──
       let sqlOrders = `

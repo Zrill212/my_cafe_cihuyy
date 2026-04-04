@@ -310,13 +310,27 @@ exports.payOrder = async (req, res) => {
   try {
 
     const result = await query(
-      "UPDATE orders SET status = 'paid', method = ? WHERE id = ? AND cafe_id = ?",
+      "UPDATE orders SET method = ? WHERE id = ? AND cafe_id = ?",
       [method, orderId, cafeId]
     );
 
     if (result.affectedRows === 0) {
       return sendResponse(res, 404, "Order tidak ditemukan", []);
     }
+
+    await query(
+      `INSERT INTO order_payments
+       (order_id, cafe_id, provider, status, transaction_status, raw_json)
+       VALUES (?, ?, 'kasir', 'paid', 'paid', ?)
+       ON DUPLICATE KEY UPDATE
+         cafe_id = VALUES(cafe_id),
+         provider = 'kasir',
+         status = 'paid',
+         transaction_status = 'paid',
+         raw_json = VALUES(raw_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [orderId, cafeId, JSON.stringify({ paid_at: new Date().toISOString(), method })],
+    );
 
     return sendResponse(res, 200, "Pembayaran berhasil", {
       order_id: orderId

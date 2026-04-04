@@ -28,6 +28,8 @@ router.get(
 
 // Admin Cafe: view & checkout subscription
 router.get("/plans", verifyToken, subscriptionController.listActivePlans);
+// Public (landing page): list active plans without auth
+router.get("/plans/public", subscriptionController.listActivePlans);
 router.get("/me", verifyToken, subscriptionController.getMySubscription);
 router.post("/checkout", verifyToken, subscriptionController.createSubscriptionCheckout);
 

@@ -263,7 +263,41 @@ exports.listActivePlans = async (req, res) => {
       "SELECT * FROM subscription_plans WHERE is_active = 1 ORDER BY sort_order ASC, id ASC",
       [],
     );
-    return sendResponse(res, 200, "Berhasil mengambil paket langganan", plans || []);
+
+    const cafeId = req.user?.cafe_id;
+    if (!cafeId) {
+      const mappedPublic = (plans || []).map((p) => ({
+        ...p,
+        eligible: true,
+        disabled_reason: null,
+      }));
+      return sendResponse(res, 200, "Berhasil mengambil paket langganan", mappedPublic);
+    }
+
+    const freeTx = await queryAsync(
+      `SELECT id
+       FROM subscription_transactions
+       WHERE cafe_id = ?
+         AND (payment_type = 'free' OR expected_amount = 0)
+         AND status = 'paid'
+       LIMIT 1`,
+      [cafeId],
+    );
+    const free_plan_used = Boolean(freeTx && freeTx.length > 0);
+
+    const mapped = (plans || []).map((p) => {
+      const price = Number(p.price || 0);
+      if (price === 0) {
+        return {
+          ...p,
+          eligible: !free_plan_used,
+          disabled_reason: free_plan_used ? "free_plan_already_used" : null,
+        };
+      }
+      return { ...p, eligible: true, disabled_reason: null };
+    });
+
+    return sendResponse(res, 200, "Berhasil mengambil paket langganan", mapped);
   } catch (err) {
     const pub = toPublicError(err, "Gagal mengambil paket langganan");
     return sendResponse(res, pub.status, pub.message, []);
@@ -411,6 +445,21 @@ exports.createSubscriptionCheckout = async (req, res) => {
 
     // Paket gratis: jangan panggil Midtrans (gross_amount tidak boleh 0)
     if (expectedAmount === 0) {
+      const usedRows = await queryAsync(
+        `SELECT id
+         FROM subscription_transactions
+         WHERE cafe_id = ?
+           AND (payment_type = 'free' OR expected_amount = 0)
+           AND status = 'paid'
+         LIMIT 1`,
+        [cafeId],
+      );
+      if (usedRows && usedRows.length > 0) {
+        return sendResponse(res, 403, "Paket gratis hanya bisa dipakai 1 kali", {
+          reason: "free_plan_already_used",
+        });
+      }
+
       const orderId = generateSubOrderId(cafeId);
 
       const insertResult = await queryAsync(

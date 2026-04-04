@@ -216,6 +216,74 @@ const MIGRATIONS = [
         fingerprint VARCHAR(255),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      SET @db_name = DATABASE();
+      SET @has_uq_riwayat_order_id = (
+        SELECT COUNT(1)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = @db_name
+          AND TABLE_NAME = 'riwayat_pembelian'
+          AND INDEX_NAME = 'uq_riwayat_order_id'
+      );
+      SET @sql = IF(
+        @has_uq_riwayat_order_id = 0,
+        'CREATE UNIQUE INDEX uq_riwayat_order_id ON riwayat_pembelian (order_id)',
+        'SELECT 1'
+      );
+      PREPARE stmt FROM @sql;
+      EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
+    `,
+  },
+  {
+    name: "order_payments",
+    sql: `
+      CREATE TABLE IF NOT EXISTS order_payments (
+        order_id VARCHAR(30) PRIMARY KEY,
+        cafe_id INT NULL,
+        provider VARCHAR(30) NOT NULL DEFAULT 'midtrans',
+        status ENUM('pending','paid','failed') NOT NULL DEFAULT 'pending',
+        transaction_status VARCHAR(50) NULL,
+        payment_type VARCHAR(50) NULL,
+        fraud_status VARCHAR(50) NULL,
+        midtrans_transaction_id VARCHAR(100) NULL,
+        raw_json LONGTEXT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      );
+
+      SET @db_name = DATABASE();
+      SET @has_idx_order_payments_cafe = (
+        SELECT COUNT(1)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = @db_name
+          AND TABLE_NAME = 'order_payments'
+          AND INDEX_NAME = 'idx_order_payments_cafe'
+      );
+      SET @sql = IF(
+        @has_idx_order_payments_cafe = 0,
+        'CREATE INDEX idx_order_payments_cafe ON order_payments (cafe_id)',
+        'SELECT 1'
+      );
+      PREPARE stmt FROM @sql;
+      EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
+
+      SET @has_idx_order_payments_status = (
+        SELECT COUNT(1)
+        FROM information_schema.STATISTICS
+        WHERE TABLE_SCHEMA = @db_name
+          AND TABLE_NAME = 'order_payments'
+          AND INDEX_NAME = 'idx_order_payments_status'
+      );
+      SET @sql = IF(
+        @has_idx_order_payments_status = 0,
+        'CREATE INDEX idx_order_payments_status ON order_payments (status)',
+        'SELECT 1'
+      );
+      PREPARE stmt FROM @sql;
+      EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
     `,
   },
   {
@@ -397,6 +465,7 @@ const DROP_ORDER = [
   "subscription_transactions",
   "cafe_subscriptions",
   "subscription_plans",
+  "order_payments",
   "riwayat_pembelian",
   "order_items",
   "orders",

@@ -1,6 +1,33 @@
 const midtransClient = require("midtrans-client");
 const db = require("../config/db");
 require("dotenv").config();
+const { toPublicError } = require("../utils/publicError");
+
+function mapMidtransOrderStatus(transactionStatus) {
+  if (transactionStatus === "settlement" || transactionStatus === "capture") return "paid";
+  if (transactionStatus === "pending") return "pending";
+  if (transactionStatus === "expire" || transactionStatus === "cancel" || transactionStatus === "deny") return "failed";
+  return "pending";
+}
+
+function verifyMidtransSignature(notification) {
+  try {
+    const orderId = notification.order_id;
+    const statusCode = notification.status_code;
+    const grossAmount = notification.gross_amount;
+    const signatureKey = notification.signature_key;
+
+    if (!orderId || !statusCode || !grossAmount || !signatureKey) return false;
+    if (!process.env.MIDTRANS_SERVER_KEY) return false;
+
+    const crypto = require("crypto");
+    const raw = `${orderId}${statusCode}${grossAmount}${process.env.MIDTRANS_SERVER_KEY}`;
+    const expected = crypto.createHash("sha512").update(raw).digest("hex");
+    return expected === signatureKey;
+  } catch (_) {
+    return false;
+  }
+}
 
 const snap = new midtransClient.Snap({
   isProduction: false,
@@ -57,6 +84,20 @@ exports.createTransaction = async (req, res) => {
       };
 
       const transaction = await snap.createTransaction(parameter);
+
+      // Simpan status pembayaran (pending) agar kasir bisa validasi cepat
+      await queryAsync(
+        `INSERT INTO order_payments (order_id, cafe_id, provider, status, raw_json)
+         VALUES (?, ?, 'midtrans', 'pending', ?)
+         ON DUPLICATE KEY UPDATE
+           cafe_id = VALUES(cafe_id),
+           provider = 'midtrans',
+           status = 'pending',
+           raw_json = VALUES(raw_json),
+           updated_at = CURRENT_TIMESTAMP`,
+        [existingOrderId, existingOrder.cafe_id || null, JSON.stringify({ token: transaction.token, redirect_url: transaction.redirect_url })],
+      );
+
       return res.json({
         order_id: existingOrderId,
         subtotal: totalOrder,
@@ -202,6 +243,58 @@ exports.createTransaction = async (req, res) => {
   } catch (err) {
     console.log(err);
     return res.status(500).json({ error: "Terjadi masalah saat membuat transaksi" });
+  }
+};
+
+exports.notification = async (req, res) => {
+  try {
+    const notification = req.body || {};
+
+    const ok = verifyMidtransSignature(notification);
+    if (!ok) {
+      return res.status(401).json({ message: "Signature tidak valid" });
+    }
+
+    const orderId = notification.order_id;
+    if (!orderId) return res.status(400).json({ message: "order_id wajib" });
+
+    // Ambil order untuk cafe_id
+    const orderRows = await queryAsync("SELECT id, cafe_id FROM orders WHERE id = ? LIMIT 1", [orderId]);
+    const order = orderRows && orderRows.length > 0 ? orderRows[0] : null;
+
+    const transactionStatus = String(notification.transaction_status || "");
+    const mapped = mapMidtransOrderStatus(transactionStatus);
+
+    await queryAsync(
+      `INSERT INTO order_payments
+       (order_id, cafe_id, provider, status, transaction_status, payment_type, fraud_status, midtrans_transaction_id, raw_json)
+       VALUES (?, ?, 'midtrans', ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         cafe_id = VALUES(cafe_id),
+         status = VALUES(status),
+         transaction_status = VALUES(transaction_status),
+         payment_type = VALUES(payment_type),
+         fraud_status = VALUES(fraud_status),
+         midtrans_transaction_id = VALUES(midtrans_transaction_id),
+         raw_json = VALUES(raw_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [
+        orderId,
+        order?.cafe_id || null,
+        mapped,
+        transactionStatus || null,
+        notification.payment_type || null,
+        notification.fraud_status || null,
+        notification.transaction_id || null,
+        JSON.stringify(notification),
+      ],
+    );
+
+    return res.status(200).json({ received: true, status: mapped });
+  } catch (err) {
+    console.error("[MIDTRANS][NOTIF] error:", err);
+    const pub = toPublicError(err, "Terjadi kesalahan pada server");
+    return res.status(pub.status).json({ message: pub.message });
   }
 };
 
