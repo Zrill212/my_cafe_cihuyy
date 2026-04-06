@@ -60,6 +60,11 @@ async function getSubscriptionWithExpiryCheck(cafeId) {
 module.exports = function requireFeature(featureKey) {
   return async (req, res, next) => {
     try {
+      const bypass = String(process.env.SUBSCRIPTION_BYPASS || "").toLowerCase();
+      if (bypass === "true" || bypass === "1") {
+        return next();
+      }
+
       const cafeId = req.user?.cafe_id;
       if (!cafeId) return sendResponse(res, 401, "Unauthorized", null);
 
