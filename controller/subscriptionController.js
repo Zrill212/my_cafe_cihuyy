@@ -523,9 +523,14 @@ exports.createSubscriptionCheckout = async (req, res) => {
       [orderId, cafeId, adminId || null, planId, expectedAmount],
     );
 
-    const baseUrlFromEnv = (process.env.BASE_URL || "").replace(/\/+$/, "");
+    const explicitBackendBaseUrl = (
+      process.env.API_BASE_URL ||
+      process.env.BACKEND_BASE_URL ||
+      process.env.BASE_URL ||
+      ""
+    ).replace(/\/+$/, "");
     const requestBaseUrl = `${req.protocol}://${req.get("host")}`.replace(/\/+$/, "");
-    const apiBaseUrl = baseUrlFromEnv || requestBaseUrl;
+    const apiBaseUrl = explicitBackendBaseUrl || requestBaseUrl;
 
     const buildCallbackUrl = (result) => {
       if (!apiBaseUrl) return null;
