@@ -92,7 +92,7 @@ module.exports = function requireFeature(featureKey) {
       const features = parseFeatures(sub.features_json);
       const allowed = features && Object.prototype.hasOwnProperty.call(features, featureKey)
         ? Boolean(features[featureKey])
-        : false;
+        : true;
 
       if (!allowed) {
         return sendResponse(res, 403, "Fitur tidak tersedia di paket Anda", {
