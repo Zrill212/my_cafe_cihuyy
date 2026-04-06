@@ -70,11 +70,13 @@ exports.getRiwayatPembelian = (req, res) => {
 
       const valsOrders = [cafeId];
 
-      if (visitorId) {
+      if (visitorId && fingerprint) {
+        sqlOrders += ` AND (rb.visitor_id = ? OR rb.fingerprint = ?)`;
+        valsOrders.push(visitorId, fingerprint);
+      } else if (visitorId) {
         sqlOrders += ` AND rb.visitor_id = ?`;
         valsOrders.push(visitorId);
-      }
-      if (fingerprint) {
+      } else if (fingerprint) {
         sqlOrders += ` AND rb.fingerprint = ?`;
         valsOrders.push(fingerprint);
       }

@@ -37,6 +37,9 @@ module.exports = (req, res, next) => {
     null;
   const fingerprint = fingerprintRaw ? String(fingerprintRaw) : null;
 
+  const proto = String(req.headers["x-forwarded-proto"] || "").toLowerCase();
+  const isHttps = Boolean(req.secure || proto === "https");
+
   const cookies = parseCookies(req.headers.cookie);
   let visitorId = cookies.visitor_id;
 
@@ -44,10 +47,10 @@ module.exports = (req, res, next) => {
     visitorId = crypto.createHash("sha256").update(fingerprint).digest("hex");
     const cookie = buildCookie("visitor_id", visitorId, {
       path: "/",
-      sameSite: "Lax",
+      sameSite: isHttps ? "None" : "Lax",
       httpOnly: false,
       maxAgeSeconds: 60 * 60 * 24 * 365,
-      secure: false,
+      secure: isHttps,
     });
     res.setHeader("Set-Cookie", cookie);
   }
