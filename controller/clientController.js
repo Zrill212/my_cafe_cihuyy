@@ -35,6 +35,7 @@ exports.getRiwayatPembelian = (req, res) => {
   const visitorId   = req.query.visitor_id   || req.clientMeta?.visitor_id   || null;
   const fingerprint = req.query.fingerprint  || req.clientMeta?.fingerprint  || null;
   const mejaId      = req.query.meja_id      || req.query.meja               || null;
+  const status      = req.query.status       || null;
   const limit       = Math.min(Number(req.query.limit || 20), 100);
 
   // ── Cek apakah tabel riwayat_pembelian ada ──────────────────────────────
@@ -83,6 +84,11 @@ exports.getRiwayatPembelian = (req, res) => {
       if (mejaId) {
         sqlOrders += ` AND o.meja = ?`;
         valsOrders.push(String(mejaId));
+      }
+
+      if (status) {
+        sqlOrders += ` AND o.status = ?`;
+        valsOrders.push(String(status));
       }
 
       sqlOrders += ` ORDER BY o.created_at DESC LIMIT ?`;
