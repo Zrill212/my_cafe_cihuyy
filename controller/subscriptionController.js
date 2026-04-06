@@ -632,6 +632,7 @@ exports.midtransReturn = async (req, res) => {
     const url = new URL(`${frontendBaseUrl}${frontendReturnPath}`);
     if (orderId) url.searchParams.set("order_id", orderId);
     if (result) url.searchParams.set("result", result);
+    url.searchParams.set("synced", "0");
 
     if (!orderId) {
       return res.redirect(url.toString());
@@ -649,8 +650,31 @@ exports.midtransReturn = async (req, res) => {
       url.searchParams.set("transaction_status", String(midtransStatus.transaction_status || ""));
 
       try {
-        await syncTransactionStatusFromMidtrans(orderId, midtransStatus);
+        const syncedTx = await syncTransactionStatusFromMidtrans(orderId, midtransStatus);
         url.searchParams.set("synced", "1");
+
+        const paymentStatus = syncedTx?.status || mapMidtransTransactionStatus(midtransStatus.transaction_status);
+        url.searchParams.set("payment_status", paymentStatus);
+
+        if (paymentStatus === "paid") {
+          url.searchParams.set("subscription_status", "active");
+          url.searchParams.set(
+            "message",
+            "Pembayaran berhasil. Paket sudah aktif.",
+          );
+        } else if (paymentStatus === "pending") {
+          url.searchParams.set("subscription_status", "pending");
+          url.searchParams.set(
+            "message",
+            "Pembayaran belum selesai. Silakan selesaikan pembayaran untuk membuka website.",
+          );
+        } else {
+          url.searchParams.set("subscription_status", "inactive");
+          url.searchParams.set(
+            "message",
+            "Pembayaran gagal/expired. Silakan coba bayar lagi dari halaman billing.",
+          );
+        }
       } catch (err) {
         console.error("[SUBSCRIPTION][RETURN] sync error:", err);
         url.searchParams.set("synced", "0");
