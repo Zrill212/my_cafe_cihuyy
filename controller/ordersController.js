@@ -14,6 +14,19 @@ const snap = new midtransClient.Snap({
   serverKey: process.env.MIDTRANS_SERVER_KEY,
 });
 
+function isOnlinePaymentEnabledForCafe(cafeId, cb) {
+  if (!cafeId) return cb(null, true);
+  db.query(
+    "SELECT status_method FROM pembayaran WHERE cafe_id = ? AND LOWER(nama_method) = 'online' LIMIT 1",
+    [cafeId],
+    (err, rows) => {
+      if (err) return cb(null, true);
+      if (!rows || rows.length === 0) return cb(null, true);
+      return cb(null, Number(rows[0].status_method || 0) === 1);
+    },
+  );
+}
+
 /* ── Helpers ─────────────────────────────────────────────────────────────── */
 const sendResponse = (res, httpStatus, message, data) => {
   return res.status(httpStatus).json({
@@ -420,104 +433,96 @@ exports.userCreate = (req, res) => {
     nama     = "",
     total    = 0,
     note     = "",
-    method   = "online",
+    method: rawMethod = "online",
     estimasi = "15 mnt",
     items    = [],
   } = req.body;
 
+  const requestedMethod = String(rawMethod || "").toLowerCase();
+
   if (!cafe_id || !meja) {
     return sendResponse(res, 400, "cafe_id dan meja wajib diisi", null);
   }
+
   if (!items || items.length === 0) {
     return sendResponse(res, 400, "Items tidak boleh kosong", null);
   }
 
   const orderId = generateOrderId();
 
-  const visitorId = req.clientMeta?.visitor_id || null;
-  const fingerprint = req.clientMeta?.fingerprint || null;
+  isOnlinePaymentEnabledForCafe(cafe_id, (mErr, onlineEnabled) => {
+    const finalMethod = requestedMethod === "online" && !onlineEnabled ? "tunai" : (requestedMethod || "tunai");
 
-  if (!fingerprint) {
-    return sendResponse(
-      res,
-      400,
-      "Perangkat belum terverifikasi. Silakan coba lagi.",
-      {
-        required: "fingerprint",
-        hint: "Kirim fingerprint via header 'x-fingerprint' atau field body 'fingerprint' sebelum membuat pesanan.",
-      },
-    );
-  }
-
-  db.query(
-    `INSERT INTO orders (id, cafe_id, meja, nama, status, total, note, method, estimasi)
-     VALUES (?, ?, ?, ?, 'proses', ?, ?, ?, ?)`,
-    [orderId, cafe_id, meja, nama, Number(total), note, method, estimasi],
-    (err) => {
-      if (err) {
-        console.error("userCreate insert order:", err);
-        const pub = toPublicError(err, "Gagal membuat pesanan");
-        return sendResponse(res, pub.status, pub.message, null);
-      }
-
-      // Insert items satu per satu
-      let idx = 0;
-
-      const insertNext = () => {
-        if (idx >= items.length) {
-          return db.query(
-            `INSERT INTO riwayat_pembelian (order_id, cafe_id, visitor_id, fingerprint)
-             VALUES (?, ?, ?, ?)
-             ON DUPLICATE KEY UPDATE
-               visitor_id = COALESCE(visitor_id, VALUES(visitor_id)),
-               fingerprint = COALESCE(fingerprint, VALUES(fingerprint))`,
-            [orderId, cafe_id, visitorId, fingerprint],
-            (rbErr) => {
-              if (rbErr) {
-                console.error("userCreate insert riwayat_pembelian:", rbErr);
-              }
-
-              return QRCode.toDataURL(orderId, (qrErr, qrCodeDataUrl) => {
-                return sendResponse(res, 201, "Pesanan berhasil dibuat", {
-                  id:       orderId,
-                  status:   "proses",
-                  waktu:    formatWaktu(),
-                  tanggal:  formatTanggal(),
-                  estimasi,
-                  qr_code:  qrErr ? null : qrCodeDataUrl,
-                });
-              });
-            },
-          );
+    db.query(
+      `INSERT INTO orders (id, cafe_id, meja, nama, status, total, note, method, estimasi)
+       VALUES (?, ?, ?, ?, 'proses', ?, ?, ?, ?)`,
+      [orderId, cafe_id, meja, nama, Number(total), note, finalMethod, estimasi],
+      (err) => {
+        if (err) {
+          console.error("userCreate insert order:", err);
+          const pub = toPublicError(err, "Gagal membuat pesanan");
+          return sendResponse(res, pub.status, pub.message, null);
         }
 
-        const item     = items[idx++];
-        if (!item) return setImmediate(insertNext);
-        const namaMenu = item.nama_menu ?? item.name ?? item.nama ?? "";
-        const qty      = Number(item.qty ?? item.jumlah ?? 1);
-        const harga    = Number(item.harga ?? item.price ?? 0);
-        const catatan  = item.catatan ?? item.note ?? item.keterangan ?? "";
+        // Insert items satu per satu
+        let idx = 0;
 
-        if (!namaMenu) return setImmediate(insertNext); // skip item kosong
+        const insertNext = () => {
+          if (idx >= items.length) {
+            return db.query(
+              `INSERT INTO riwayat_pembelian (order_id, cafe_id, visitor_id, fingerprint)
+               VALUES (?, ?, ?, ?)
+               ON DUPLICATE KEY UPDATE
+                 visitor_id = COALESCE(visitor_id, VALUES(visitor_id)),
+                 fingerprint = COALESCE(fingerprint, VALUES(fingerprint))`,
+              [orderId, cafe_id, req.clientMeta?.visitor_id || null, req.clientMeta?.fingerprint || null],
+              (rbErr) => {
+                if (rbErr) {
+                  console.error("userCreate insert riwayat_pembelian:", rbErr);
+                }
 
-        db.query(
-          `INSERT INTO order_items (order_id, nama_menu, qty, harga, catatan)
-           VALUES (?, ?, ?, ?, ?)`,
-          [orderId, namaMenu, qty, harga, catatan],
-          (err2) => {
-            if (err2) {
-              console.error("userCreate insert item:", err2);
-              // Lanjut meski satu item gagal
+                return QRCode.toDataURL(orderId, (qrErr, qrCodeDataUrl) => {
+                  return sendResponse(res, 201, "Pesanan berhasil dibuat", {
+                    id:       orderId,
+                    status:   "proses",
+                    waktu:    formatWaktu(),
+                    tanggal:  formatTanggal(),
+                    estimasi,
+                    qr_code:  qrErr ? null : qrCodeDataUrl,
+                  });
+                });
+              },
+            );
+          }
+
+          const item     = items[idx++];
+          if (!item) return setImmediate(insertNext);
+          const namaMenu = item.nama_menu ?? item.name ?? item.nama ?? "";
+          const qty      = Number(item.qty ?? item.jumlah ?? 1);
+          const harga    = Number(item.harga ?? item.price ?? 0);
+          const catatan  = item.catatan ?? item.note ?? item.keterangan ?? "";
+
+          if (!namaMenu) return setImmediate(insertNext); // skip item kosong
+
+          db.query(
+            `INSERT INTO order_items (order_id, nama_menu, qty, harga, catatan)
+             VALUES (?, ?, ?, ?, ?)`,
+            [orderId, namaMenu, qty, harga, catatan],
+            (err2) => {
+              if (err2) {
+                console.error("userCreate insert item:", err2);
+                // Lanjut meski satu item gagal
+                return setImmediate(insertNext);
+              }
               return setImmediate(insertNext);
-            }
-            return setImmediate(insertNext);
-          },
-        );
-      };
+            },
+          );
+        };
 
-      insertNext();
-    }
-  );
+        insertNext();
+      }
+    );
+  });
 };
 
 // GET /api/orders?cafe_id=1&meja=3

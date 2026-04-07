@@ -91,6 +91,21 @@ const queryAsync = (sql, params) => {
   });
 };
 
+const isOnlinePaymentEnabledForCafe = async (cafeId) => {
+  if (!cafeId) return true;
+  try {
+    const rows = await queryAsync(
+      "SELECT status_method FROM pembayaran WHERE cafe_id = ? AND LOWER(nama_method) = 'online' LIMIT 1",
+      [cafeId],
+    );
+    if (!rows || rows.length === 0) return true;
+    return Number(rows[0].status_method || 0) === 1;
+  } catch (err) {
+    // Jika tabel/kolom belum ada atau error lain, jangan memblokir pembayaran
+    return true;
+  }
+};
+
 exports.returnHandler = async (req, res) => {
   try {
     const orderId = String(req.query.order_id || "").trim();
@@ -204,6 +219,15 @@ exports.createTransaction = async (req, res) => {
       if (!existingOrder) {
         return res.status(404).json({ error: "Terjadi masalah: order tidak ditemukan" });
       }
+
+      const onlineEnabled = await isOnlinePaymentEnabledForCafe(existingOrder.cafe_id);
+      if (!onlineEnabled) {
+        return res.status(403).json({
+          error: "Pembayaran online sedang dinonaktifkan. Silakan pilih pembayaran tunai.",
+          reason: "online_payment_disabled",
+        });
+      }
+
       const totalOrder = Number(existingOrder.total ?? 0);
       if (!Number.isFinite(totalOrder) || totalOrder <= 0) {
         return res.status(400).json({ error: "Terjadi masalah: total order tidak valid" });
@@ -263,6 +287,15 @@ exports.createTransaction = async (req, res) => {
     if (!cafeId || !meja) {
       return res.status(400).json({ error: "Terjadi masalah: cafe_id dan meja wajib diisi" });
     }
+
+    const onlineEnabled = await isOnlinePaymentEnabledForCafe(cafeId);
+    if (!onlineEnabled) {
+      return res.status(403).json({
+        error: "Pembayaran online sedang dinonaktifkan. Silakan pilih pembayaran tunai.",
+        reason: "online_payment_disabled",
+      });
+    }
+
     if (!Array.isArray(items) || items.length === 0) {
       return res.status(400).json({ error: "Terjadi masalah: items tidak boleh kosong" });
     }

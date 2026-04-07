@@ -95,6 +95,23 @@ const ensureDefaultMethods = (cafeId, cb) => {
   );
 };
 
+exports.getPembayaranPublic = (req, res) => {
+  const cafeId = req.query.cafe_id || req.query.cafeId;
+  if (!cafeId) {
+    return sendResponse(res, 400, "cafe_id wajib diisi", []);
+  }
+
+  ensureDefaultMethods(cafeId, (err, rows) => {
+    if (err) {
+      const pub = toPublicError(err, "Gagal mengambil data pembayaran");
+      return sendResponse(res, pub.status, pub.message, []);
+    }
+
+    const active = (rows || []).filter((r) => Number(r.status_method || 0) === 1);
+    return sendResponse(res, 200, "Berhasil mengambil data pembayaran", active);
+  });
+};
+
 exports.getPembayaran = (req, res) => {
   const cafeId = req.user?.cafe_id;
 
