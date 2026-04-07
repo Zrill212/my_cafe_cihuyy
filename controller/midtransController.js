@@ -3,6 +3,11 @@ const db = require("../config/db");
 require("dotenv").config();
 const { toPublicError } = require("../utils/publicError");
 
+const isMidtransProduction = () => {
+  const raw = String(process.env.MIDTRANS_IS_PRODUCTION || "").trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "y";
+};
+
 const buildFrontendPaymentReturnUrl = ({ orderId, result, paymentStatus, transactionStatus, statusCode, synced }) => {
   const frontendBaseUrl = String(process.env.FRONTEND_BASE_URL || "").replace(/\/+$/, "");
   if (!frontendBaseUrl) return null;
@@ -67,7 +72,7 @@ function verifyMidtransSignature(notification) {
 }
 
 const snap = new midtransClient.Snap({
-  isProduction: String(process.env.MIDTRANS_IS_PRODUCTION || "false").toLowerCase() === "true",
+  isProduction: isMidtransProduction(),
   serverKey: process.env.MIDTRANS_SERVER_KEY,
 });
 

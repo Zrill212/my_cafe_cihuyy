@@ -2,8 +2,13 @@ const midtransClient = require("midtrans-client");
 const db = require("../config/db");
 const { toPublicError } = require("../utils/publicError");
 
+const isMidtransProduction = () => {
+  const raw = String(process.env.MIDTRANS_IS_PRODUCTION || "").trim().toLowerCase();
+  return raw === "true" || raw === "1" || raw === "yes" || raw === "y";
+};
+
 const snap = new midtransClient.Snap({
-  isProduction: String(process.env.MIDTRANS_IS_PRODUCTION || "false").toLowerCase() === "true",
+  isProduction: isMidtransProduction(),
   serverKey: process.env.MIDTRANS_SERVER_KEY,
 });
 
