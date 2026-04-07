@@ -36,6 +36,20 @@ const buildApiBaseUrl = (req) => {
   return explicit || requestBase;
 };
 
+exports.getConfig = (req, res) => {
+  const production = isMidtransProduction();
+  const snapJsUrl = production
+    ? "https://app.midtrans.com/snap/snap.js"
+    : "https://app.sandbox.midtrans.com/snap/snap.js";
+
+  return res.status(200).json({
+    success: true,
+    is_production: production,
+    snap_js_url: snapJsUrl,
+    client_key: process.env.MIDTRANS_CLIENT_KEY || null,
+  });
+};
+
 const buildMidtransReturnUrl = (req, orderId, result) => {
   const apiBaseUrl = buildApiBaseUrl(req);
   if (!apiBaseUrl) return null;

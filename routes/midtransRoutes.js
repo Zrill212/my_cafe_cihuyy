@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 const midtransController = require("../controller/midtransController");
 
+router.get("/config", midtransController.getConfig);
+
 // CREATE TRANSACTION
 router.post("/create", midtransController.createTransaction);
 // alias untuk request lama
