@@ -22,10 +22,22 @@ async function seedSuperAdmin() {
         }
 
         if (results && results.length > 0) {
-          console.log("⚠️  Super Admin sudah ada di database");
-          console.log("📧 Email:", email);
-          db.end();
-          process.exit(0);
+          db.query(
+            "UPDATE super_admins SET username = ?, password = ?, full_name = ? WHERE email = ?",
+            [username, hashedPassword, full_name, email],
+            (updateErr) => {
+              if (updateErr) {
+                console.error("❌ Error updating super admin:", updateErr);
+                process.exit(1);
+              }
+              console.log("✅ Super Admin sudah ada, password di-reset!");
+              console.log("📧 Email:", email);
+              console.log("🔑 Password:", password);
+              console.log("👤 Username:", username);
+              db.end();
+              process.exit(0);
+            },
+          );
         } else {
           db.query(
             "INSERT INTO super_admins (username, email, password, full_name) VALUES (?, ?, ?, ?)",
