@@ -10,6 +10,9 @@ router.post("/create-payment", midtransController.createTransaction);
 // WEBHOOK NOTIFICATION
 router.post("/notification", midtransController.notification);
 
+// RETURN / REDIRECT AFTER PAYMENT
+router.get("/return", midtransController.returnHandler);
+
 // CEK STATUS
 router.get("/status/:orderId", midtransController.checkStatus);
 

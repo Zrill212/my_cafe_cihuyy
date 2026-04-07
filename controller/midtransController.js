@@ -3,6 +3,43 @@ const db = require("../config/db");
 require("dotenv").config();
 const { toPublicError } = require("../utils/publicError");
 
+const buildFrontendPaymentReturnUrl = ({ orderId, result, paymentStatus, transactionStatus, statusCode, synced }) => {
+  const frontendBaseUrl = String(process.env.FRONTEND_BASE_URL || "").replace(/\/+$/, "");
+  if (!frontendBaseUrl) return null;
+
+  const rawPath = process.env.FRONTEND_ORDER_RETURN_PATH || process.env.FRONTEND_RETURN_PATH || "/user";
+  const path = rawPath.startsWith("/") ? rawPath : `/${rawPath}`;
+
+  const url = new URL(`${frontendBaseUrl}${path}`);
+  if (orderId) url.searchParams.set("order_id", String(orderId));
+  if (result) url.searchParams.set("result", String(result));
+  if (paymentStatus) url.searchParams.set("payment_status", String(paymentStatus));
+  if (transactionStatus) url.searchParams.set("transaction_status", String(transactionStatus));
+  if (statusCode) url.searchParams.set("status_code", String(statusCode));
+  if (synced !== undefined && synced !== null) url.searchParams.set("synced", String(synced ? 1 : 0));
+  return url.toString();
+};
+
+const buildApiBaseUrl = (req) => {
+  const explicit = (
+    process.env.API_BASE_URL ||
+    process.env.BACKEND_BASE_URL ||
+    process.env.BASE_URL ||
+    ""
+  ).replace(/\/+$/, "");
+  const requestBase = `${req.protocol}://${req.get("host")}`.replace(/\/+$/, "");
+  return explicit || requestBase;
+};
+
+const buildMidtransReturnUrl = (req, orderId, result) => {
+  const apiBaseUrl = buildApiBaseUrl(req);
+  if (!apiBaseUrl) return null;
+  const url = new URL(`${apiBaseUrl}/api/midtrans/return`);
+  if (orderId) url.searchParams.set("order_id", String(orderId));
+  if (result) url.searchParams.set("result", String(result));
+  return url.toString();
+};
+
 function mapMidtransOrderStatus(transactionStatus) {
   if (transactionStatus === "settlement" || transactionStatus === "capture") return "paid";
   if (transactionStatus === "pending") return "pending";
@@ -30,7 +67,7 @@ function verifyMidtransSignature(notification) {
 }
 
 const snap = new midtransClient.Snap({
-  isProduction: false,
+  isProduction: String(process.env.MIDTRANS_IS_PRODUCTION || "false").toLowerCase() === "true",
   serverKey: process.env.MIDTRANS_SERVER_KEY,
 });
 
@@ -47,6 +84,97 @@ const queryAsync = (sql, params) => {
       return resolve(results);
     });
   });
+};
+
+exports.returnHandler = async (req, res) => {
+  try {
+    const orderId = String(req.query.order_id || "").trim();
+    const result = String(req.query.result || "finish").trim();
+
+    if (!orderId) {
+      const fallback = buildFrontendPaymentReturnUrl({
+        orderId: null,
+        result,
+        paymentStatus: "unknown",
+        transactionStatus: null,
+        statusCode: null,
+        synced: 0,
+      });
+      if (!fallback) return res.status(400).send("order_id wajib");
+      return res.redirect(fallback);
+    }
+
+    let midtransStatus = null;
+    try {
+      midtransStatus = await snap.transaction.status(orderId);
+    } catch (err) {
+      console.error("[MIDTRANS][RETURN] status error:", err);
+    }
+
+    let paymentStatus = "unknown";
+    let synced = 0;
+    let transactionStatus = null;
+    let statusCode = null;
+
+    if (midtransStatus) {
+      transactionStatus = String(midtransStatus.transaction_status || "") || null;
+      statusCode = String(midtransStatus.status_code || "") || null;
+      paymentStatus = mapMidtransOrderStatus(transactionStatus);
+
+      try {
+        // store/update order_payments using same structure as notification
+        const orderRows = await queryAsync("SELECT id, cafe_id FROM orders WHERE id = ? LIMIT 1", [orderId]);
+        const order = orderRows && orderRows.length > 0 ? orderRows[0] : null;
+
+        await queryAsync(
+          `INSERT INTO order_payments
+           (order_id, cafe_id, provider, status, transaction_status, payment_type, fraud_status, midtrans_transaction_id, raw_json)
+           VALUES (?, ?, 'midtrans', ?, ?, ?, ?, ?, ?)
+           ON DUPLICATE KEY UPDATE
+             cafe_id = VALUES(cafe_id),
+             status = VALUES(status),
+             transaction_status = VALUES(transaction_status),
+             payment_type = VALUES(payment_type),
+             fraud_status = VALUES(fraud_status),
+             midtrans_transaction_id = VALUES(midtrans_transaction_id),
+             raw_json = VALUES(raw_json),
+             updated_at = CURRENT_TIMESTAMP`,
+          [
+            orderId,
+            order?.cafe_id || null,
+            paymentStatus,
+            transactionStatus,
+            midtransStatus.payment_type || null,
+            midtransStatus.fraud_status || null,
+            midtransStatus.transaction_id || null,
+            JSON.stringify(midtransStatus),
+          ],
+        );
+
+        synced = 1;
+      } catch (err) {
+        console.error("[MIDTRANS][RETURN] sync error:", err);
+      }
+    }
+
+    const redirectUrl = buildFrontendPaymentReturnUrl({
+      orderId,
+      result,
+      paymentStatus,
+      transactionStatus,
+      statusCode,
+      synced,
+    });
+
+    if (!redirectUrl) {
+      return res.status(500).send("FRONTEND_BASE_URL belum diset");
+    }
+
+    return res.redirect(redirectUrl);
+  } catch (err) {
+    console.error("[MIDTRANS][RETURN] error:", err);
+    return res.status(500).send("Terjadi kesalahan pada server");
+  }
 };
 
 const getOrderById = async (orderId) => {
@@ -76,12 +204,24 @@ exports.createTransaction = async (req, res) => {
         return res.status(400).json({ error: "Terjadi masalah: total order tidak valid" });
       }
 
+      const finishUrl = buildMidtransReturnUrl(req, existingOrderId, "finish");
+      const unfinishUrl = buildMidtransReturnUrl(req, existingOrderId, "unfinish");
+      const errorUrl = buildMidtransReturnUrl(req, existingOrderId, "error");
+
       const parameter = {
         transaction_details: {
           order_id: existingOrderId,
           gross_amount: parseInt(totalOrder, 10),
         },
       };
+
+      if (finishUrl) {
+        parameter.callbacks = {
+          finish: finishUrl,
+          unfinish: unfinishUrl,
+          error: errorUrl,
+        };
+      }
 
       const transaction = await snap.createTransaction(parameter);
 
@@ -230,6 +370,18 @@ exports.createTransaction = async (req, res) => {
       },
     };
 
+    const finishUrl = buildMidtransReturnUrl(req, orderId, "finish");
+    const unfinishUrl = buildMidtransReturnUrl(req, orderId, "unfinish");
+    const errorUrl = buildMidtransReturnUrl(req, orderId, "error");
+
+    if (finishUrl) {
+      parameter.callbacks = {
+        finish: finishUrl,
+        unfinish: unfinishUrl,
+        error: errorUrl,
+      };
+    }
+
     const transaction = await snap.createTransaction(parameter);
 
     return res.json({
@@ -300,8 +452,27 @@ exports.notification = async (req, res) => {
 
 exports.checkStatus = async (req, res) => {
   try {
-    const status = await snap.transaction.status(req.params.orderId);
-    return res.json(status);
+    const orderId = req.params.orderId;
+    const status = await snap.transaction.status(orderId);
+    const transactionStatus = String(status?.transaction_status || "") || null;
+    const mapped = mapMidtransOrderStatus(transactionStatus);
+
+    let local = null;
+    try {
+      const rows = await queryAsync("SELECT * FROM order_payments WHERE order_id = ? LIMIT 1", [orderId]);
+      local = rows && rows.length > 0 ? rows[0] : null;
+    } catch (_) {
+      local = null;
+    }
+
+    return res.json({
+      order_id: orderId,
+      payment_status: mapped,
+      transaction_status: transactionStatus,
+      status_code: status?.status_code || null,
+      raw_midtrans: status,
+      local_payment: local,
+    });
   } catch (err) {
     console.log("ERROE MIDTRANS:", err);
     return res.status(500).json({ error: "Terjadi masalah saat cek status" });

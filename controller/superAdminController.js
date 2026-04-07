@@ -169,9 +169,30 @@ exports.login = async (req, res) => {
 
     const superAdmin = superAdmins[0];
     console.log("[SUPERADMIN LOGIN] Found super admin:", superAdmin.email);
-    
-    const isPasswordValid = await bcrypt.compare(password, superAdmin.password);
+
+    const storedPassword = superAdmin?.password != null ? String(superAdmin.password) : "";
+    const looksLikeBcrypt = storedPassword.startsWith("$2a$") || storedPassword.startsWith("$2b$") || storedPassword.startsWith("$2y$");
+
+    let isPasswordValid = false;
+    if (looksLikeBcrypt) {
+      isPasswordValid = await bcrypt.compare(password, storedPassword);
+    } else {
+      // Legacy/plaintext password support
+      isPasswordValid = String(password) === storedPassword;
+    }
+
     console.log("[SUPERADMIN LOGIN] Password valid:", isPasswordValid);
+
+    // If legacy/plaintext matched, migrate to bcrypt hash
+    if (isPasswordValid && !looksLikeBcrypt) {
+      try {
+        const newHash = await bcrypt.hash(String(password), 10);
+        await queryAsync("UPDATE super_admins SET password = ? WHERE id = ?", [newHash, superAdmin.id]);
+        console.log("[SUPERADMIN LOGIN] Migrated super admin password to bcrypt");
+      } catch (mErr) {
+        console.error("[SUPERADMIN LOGIN] Failed migrating password:", mErr);
+      }
+    }
 
     if (!isPasswordValid) {
       console.log("[SUPERADMIN LOGIN] Invalid password");
