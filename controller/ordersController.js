@@ -37,6 +37,26 @@ const sendResponse = (res, httpStatus, message, data) => {
   });
 };
 
+const normalizeOrderStatusFromPayload = (body = {}) => {
+  const rawStatus =
+    body.status ??
+    body.status_pengantaran ??
+    body.delivery_status ??
+    null;
+
+  const normalized = String(rawStatus || "").trim().toLowerCase();
+  const deliveredFlag = body.is_delivered;
+  const isDelivered =
+    deliveredFlag === true ||
+    String(deliveredFlag || "").trim().toLowerCase() === "true" ||
+    String(deliveredFlag || "").trim() === "1";
+
+  if (isDelivered) return "selesai";
+  if (["selesai", "lunas", "siap", "diantar", "delivered"].includes(normalized)) return "selesai";
+  if (["proses", "pending", "diproses", "process"].includes(normalized)) return "proses";
+  return normalized || null;
+};
+
 function mapMidtransOrderStatus(transactionStatus) {
   if (transactionStatus === "settlement" || transactionStatus === "capture") return "paid";
   if (transactionStatus === "pending") return "pending";
@@ -384,7 +404,7 @@ exports.adminGetOne = (req, res) => {
 exports.adminUpdateStatus = (req, res) => {
   const cafe_id    = req.user.cafe_id;
   const { id }     = req.params;
-  const { status } = req.body;
+  const status = normalizeOrderStatusFromPayload(req.body);
 
   const allowed = ["proses", "selesai"];
   if (!allowed.includes(status)) {
@@ -728,7 +748,7 @@ exports.getOrders = async (req, res) => {
 // Dipanggil oleh terminal kasir — verifikasi cafe_id dari token JWT
 exports.kasirUpdateStatus = (req, res) => {
   const { id }     = req.params;
-  const { status } = req.body;
+  const status = normalizeOrderStatusFromPayload(req.body);
   const cafe_id    = req.user?.cafe_id;
 
   // Status yang boleh diset oleh kasir
