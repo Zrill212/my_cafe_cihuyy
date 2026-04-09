@@ -5,7 +5,9 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 5 * 1024 * 1024,
+    // Naikkan limit agar upload menu tidak sering 413.
+    // Jika reverse proxy (nginx) masih membatasi, perlu naikkan client_max_body_size juga.
+    fileSize: 20 * 1024 * 1024,
   },
 });
 

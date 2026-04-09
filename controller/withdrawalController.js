@@ -32,6 +32,22 @@ const ensureWithdrawalTable = async () => {
   );
 };
 
+const ensureCafeSaldoTable = async () => {
+  await query(
+    `CREATE TABLE IF NOT EXISTS cafe_saldo_transactions (
+      id BIGINT PRIMARY KEY AUTO_INCREMENT,
+      cafe_id INT NOT NULL,
+      order_id VARCHAR(30) NOT NULL,
+      amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+      payment_method VARCHAR(30) NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      UNIQUE KEY uq_cafe_saldo_order_id (order_id),
+      INDEX idx_cafe_saldo_cafe_id (cafe_id),
+      INDEX idx_cafe_saldo_created_at (created_at)
+    )`,
+  );
+};
+
 const sendResponse = (res, httpStatus, message, data) => {
   return res.status(httpStatus).json({
     status: httpStatus,
@@ -194,6 +210,7 @@ exports.getBalance = async (req, res) => {
 
   try {
     await ensureWithdrawalTable();
+    await ensureCafeSaldoTable();
 
     const incomeRows = await query(
       `SELECT
