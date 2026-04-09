@@ -48,6 +48,26 @@ const ensureCafeSaldoTable = async () => {
   );
 };
 
+const backfillCafeSaldoTransactionsFromOrders = async (cafeId) => {
+  if (!cafeId) return;
+
+  // Isi saldo dari order yang sudah selesai tapi belum tercatat di cafe_saldo_transactions.
+  // Idempotent karena order_id unik (INSERT IGNORE).
+  await query(
+    `INSERT IGNORE INTO cafe_saldo_transactions (cafe_id, order_id, amount, payment_method, created_at)
+     SELECT
+       o.cafe_id,
+       o.id,
+       COALESCE(o.total, 0) AS amount,
+       o.method,
+       o.created_at
+     FROM orders o
+     WHERE o.cafe_id = ?
+       AND o.status = 'selesai'`,
+    [cafeId],
+  );
+};
+
 const sendResponse = (res, httpStatus, message, data) => {
   return res.status(httpStatus).json({
     status: httpStatus,
@@ -211,6 +231,7 @@ exports.getBalance = async (req, res) => {
   try {
     await ensureWithdrawalTable();
     await ensureCafeSaldoTable();
+    await backfillCafeSaldoTransactionsFromOrders(cafeId);
 
     const incomeRows = await query(
       `SELECT
