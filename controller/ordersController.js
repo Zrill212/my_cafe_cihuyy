@@ -57,6 +57,52 @@ const normalizeOrderStatusFromPayload = (body = {}) => {
   return normalized || null;
 };
 
+const normalizeDeliveryFromPayload = (body = {}, mappedStatus = null) => {
+  const rawDelivery = body.delivery_status ?? body.status_pengantaran ?? null;
+  const normalizedDelivery = String(rawDelivery || "").trim().toLowerCase();
+  const deliveredFlag = body.is_delivered;
+  const deliveredFromFlag =
+    deliveredFlag === true ||
+    String(deliveredFlag || "").trim().toLowerCase() === "true" ||
+    String(deliveredFlag || "").trim() === "1";
+
+  const isDelivered =
+    deliveredFromFlag ||
+    normalizedDelivery === "diantar" ||
+    mappedStatus === "selesai";
+
+  const deliveryStatus = isDelivered ? "diantar" : "siap";
+  return {
+    delivery_status: deliveryStatus,
+    status_pengantaran: deliveryStatus,
+    is_delivered: isDelivered,
+  };
+};
+
+function updateOrderStatusAndDelivery(orderId, status, reqBody, callback) {
+  const delivery = normalizeDeliveryFromPayload(reqBody, status);
+  db.query(
+    `UPDATE orders
+     SET status = ?,
+         delivery_status = ?,
+         is_delivered = ?
+     WHERE id = ?`,
+    [status, delivery.delivery_status, delivery.is_delivered ? 1 : 0, orderId],
+    (err) => {
+      if (!err) return callback(null, delivery);
+      // Fallback untuk DB lama yang belum punya kolom pengantaran
+      if (err && err.code === "ER_BAD_FIELD_ERROR") {
+        return db.query(
+          `UPDATE orders SET status = ? WHERE id = ?`,
+          [status, orderId],
+          (err2) => callback(err2, delivery),
+        );
+      }
+      return callback(err, delivery);
+    },
+  );
+}
+
 function mapMidtransOrderStatus(transactionStatus) {
   if (transactionStatus === "settlement" || transactionStatus === "capture") return "paid";
   if (transactionStatus === "pending") return "pending";
@@ -138,6 +184,8 @@ function formatTanggal(dateStr) {
 function formatOrder(o, items) {
   const itemNotes = {};
   items.forEach(i => { if (i.item_note) itemNotes[i.name] = i.item_note; });
+  const isDelivered = Number(o.is_delivered || 0) === 1 || String(o.delivery_status || "").toLowerCase() === "diantar";
+  const deliveryStatus = isDelivered ? "diantar" : (o.status === "selesai" ? "siap" : "proses");
   return {
     id:         o.id,
     cafe_id:    o.cafe_id,
@@ -148,6 +196,9 @@ function formatOrder(o, items) {
     note:       o.note     ?? "",
     method:     o.method   ?? "online",
     estimasi:   o.estimasi ?? "15 mnt",
+    delivery_status: deliveryStatus,
+    status_pengantaran: deliveryStatus,
+    is_delivered: isDelivered,
     waktu:      formatWaktu(o.created_at),
     tanggal:    formatTanggal(o.created_at),
     created_at: o.created_at,
@@ -456,10 +507,11 @@ exports.adminUpdateStatus = (req, res) => {
             }
           }
 
-          db.query(
-            `UPDATE orders SET status = ? WHERE id = ?`,
-            [status, id],
-            (err2) => {
+          updateOrderStatusAndDelivery(
+            id,
+            status,
+            req.body,
+            (err2, delivery) => {
               if (err2) {
                 const pub = toPublicError(err2, "Gagal update status");
                 return sendResponse(res, pub.status, pub.message, null);
@@ -475,12 +527,12 @@ exports.adminUpdateStatus = (req, res) => {
                       const pub = toPublicError(saldoErr, "Gagal mencatat saldo transaksi cafe");
                       return sendResponse(res, pub.status, pub.message, null);
                     }
-                    return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status });
+                    return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status, ...delivery });
                   },
                 );
               }
-              return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status });
-            },
+              return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status, ...delivery });
+            }
           );
         },
       );
@@ -818,10 +870,11 @@ exports.kasirUpdateStatus = (req, res) => {
             }
           }
 
-          db.query(
-            `UPDATE orders SET status = ? WHERE id = ?`,
-            [status, id],
-            (err2) => {
+          updateOrderStatusAndDelivery(
+            id,
+            status,
+            req.body,
+            (err2, delivery) => {
               if (err2) {
                 const pub = toPublicError(err2, "Gagal update status");
                 return res.status(pub.status).json({ success: false, message: pub.message });
@@ -840,7 +893,7 @@ exports.kasirUpdateStatus = (req, res) => {
                     return res.status(200).json({
                       success: true,
                       message: `Status pesanan diupdate ke '${status}'`,
-                      data: { id, status },
+                      data: { id, status, ...delivery },
                     });
                   },
                 );
@@ -848,9 +901,9 @@ exports.kasirUpdateStatus = (req, res) => {
               return res.status(200).json({
                 success: true,
                 message: `Status pesanan diupdate ke '${status}'`,
-                data: { id, status },
+                data: { id, status, ...delivery },
               });
-            },
+            }
           );
         },
       );

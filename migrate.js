@@ -187,9 +187,45 @@ const MIGRATIONS = [
         total DECIMAL(12,2) DEFAULT 0,
         note TEXT,
         method ENUM('online','kasir') DEFAULT 'online',
+        delivery_status VARCHAR(20) DEFAULT 'proses',
+        is_delivered TINYINT(1) NOT NULL DEFAULT 0,
         estimasi VARCHAR(20),
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      SET @db_name = DATABASE();
+
+      SET @has_delivery_status = (
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = @db_name
+          AND TABLE_NAME = 'orders'
+          AND COLUMN_NAME = 'delivery_status'
+      );
+      SET @sql = IF(
+        @has_delivery_status = 0,
+        "ALTER TABLE orders ADD COLUMN delivery_status VARCHAR(20) DEFAULT 'proses' AFTER method",
+        'SELECT 1'
+      );
+      PREPARE stmt FROM @sql;
+      EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
+
+      SET @has_is_delivered = (
+        SELECT COUNT(*)
+        FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = @db_name
+          AND TABLE_NAME = 'orders'
+          AND COLUMN_NAME = 'is_delivered'
+      );
+      SET @sql = IF(
+        @has_is_delivered = 0,
+        "ALTER TABLE orders ADD COLUMN is_delivered TINYINT(1) NOT NULL DEFAULT 0 AFTER delivery_status",
+        'SELECT 1'
+      );
+      PREPARE stmt FROM @sql;
+      EXECUTE stmt;
+      DEALLOCATE PREPARE stmt;
     `,
   },
   {

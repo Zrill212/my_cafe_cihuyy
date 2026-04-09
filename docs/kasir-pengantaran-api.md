@@ -52,7 +52,10 @@ Status: `200 OK`
   "message": "Status pesanan diupdate ke 'selesai'",
   "data": {
     "id": "ORD-MNR2H6IR-51SY",
-    "status": "selesai"
+    "status": "selesai",
+    "delivery_status": "diantar",
+    "status_pengantaran": "diantar",
+    "is_delivered": true
   }
 }
 ```
@@ -115,4 +118,5 @@ Jika payload tidak bisa dipetakan ke status valid.
 
 2. FE tidak perlu kirim `status` bila sudah mengirim field pengantaran di atas.
 3. Setelah sukses, refresh list order agar card berpindah tab sesuai status terbaru.
+4. Backend sekarang juga menyimpan flag pengantaran di order (`delivery_status`, `is_delivered`) sehingga FE bisa memisahkan tab **Siap Diantar** vs **Sudah Diantar** langsung dari response order.
 
