@@ -8,6 +8,7 @@ const clientIdentity = require("../middleware/clientIdentity");
 /* ── ADMIN (butuh JWT) ───────────────────────────────────────────────────── */
 router.get   ("/admin",            auth, OrderCtrl.adminGetAll);
 router.get   ("/admin/midtrans-balance", auth, OrderCtrl.adminGetMidtransBalance);
+router.get   ("/admin/saldo",      auth, OrderCtrl.adminGetSaldo);
 router.get   ("/admin/:id",        auth, OrderCtrl.adminGetOne);
 router.patch ("/admin/:id/status", auth, OrderCtrl.adminUpdateStatus);
 router.delete("/admin/:id",        auth, OrderCtrl.adminDelete);

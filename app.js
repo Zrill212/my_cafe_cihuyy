@@ -191,6 +191,9 @@ app.use('/api/pajak', pajakRoutes);
 const superAdminRoutes = require('./routes/superAdminRoutes');
 app.use('/api/superadmin', superAdminRoutes);
 
+const withdrawalRoutes = require('./routes/withdrawalRoutes');
+app.use('/api/withdrawals', withdrawalRoutes);
+
 const subscriptionRoutes = require('./routes/subscriptionRoutes');
 app.use('/api/subscriptions', subscriptionRoutes);
 

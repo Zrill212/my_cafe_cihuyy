@@ -105,6 +105,85 @@ const queryAsync = (sql, params) => {
   });
 };
 
+const extractClientMetaForRiwayat = (req) => ({
+  visitorId: req.body?.visitor_id ?? req.clientMeta?.visitor_id ?? null,
+  fingerprint: req.body?.fingerprint ?? req.clientMeta?.fingerprint ?? null,
+});
+
+const upsertRiwayatPembelian = async (orderId, cafeId, visitorId, fingerprint) => {
+  if (!orderId || cafeId === undefined || cafeId === null) return;
+  await queryAsync(
+    `INSERT INTO riwayat_pembelian (order_id, cafe_id, visitor_id, fingerprint)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       visitor_id = COALESCE(VALUES(visitor_id), visitor_id),
+       fingerprint = COALESCE(VALUES(fingerprint), fingerprint)`,
+    [orderId, cafeId, visitorId || null, fingerprint || null],
+  );
+};
+
+/**
+ * Untuk order method `online`: selesai jika Midtrans paid; proses jika gagal / pending + user tutup Snap.
+ */
+const syncOrderStatusFromMidtrans = async (orderId, paymentMapped, snapResult) => {
+  if (!orderId || !paymentMapped) return;
+
+  const rows = await queryAsync(
+    "SELECT method, status FROM orders WHERE id = ? LIMIT 1",
+    [orderId],
+  );
+  const o = rows && rows.length > 0 ? rows[0] : null;
+  if (!o) return;
+
+  if (String(o.method || "").toLowerCase() !== "online") return;
+
+  let nextStatus = null;
+
+  if (paymentMapped === "paid") {
+    nextStatus = "selesai";
+  } else if (paymentMapped === "failed") {
+    nextStatus = "proses";
+  } else if (paymentMapped === "pending") {
+    const r = String(snapResult || "").toLowerCase();
+    if (r === "unfinish" || r === "error") {
+      nextStatus = "proses";
+    }
+  }
+
+  if (!nextStatus || String(o.status) === nextStatus) return;
+
+  await queryAsync("UPDATE orders SET status = ? WHERE id = ?", [nextStatus, orderId]);
+};
+
+const upsertCafeSaldoTransactionByOrderId = async (orderId, paymentMethod = "online", fallbackCafeId = null) => {
+  if (!orderId) return false;
+
+  const orderRows = await queryAsync(
+    "SELECT id, cafe_id, total, method FROM orders WHERE id = ? LIMIT 1",
+    [orderId],
+  );
+  const order = orderRows && orderRows.length > 0 ? orderRows[0] : null;
+  if (!order) return false;
+
+  const cafeId = order.cafe_id || fallbackCafeId || null;
+  if (!cafeId) return false;
+
+  const amount = Number(order.total ?? 0);
+  const finalMethod = String(order.method || paymentMethod || "online").toLowerCase();
+
+  await queryAsync(
+    `INSERT INTO cafe_saldo_transactions (cafe_id, order_id, amount, payment_method)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       cafe_id = VALUES(cafe_id),
+       amount = VALUES(amount),
+       payment_method = VALUES(payment_method)`,
+    [cafeId, order.id, Number.isFinite(amount) ? amount : 0, finalMethod],
+  );
+
+  return true;
+};
+
 const isOnlinePaymentEnabledForCafe = async (cafeId) => {
   if (!cafeId) return true;
   try {
@@ -185,9 +264,28 @@ exports.returnHandler = async (req, res) => {
           ],
         );
 
+        if (paymentStatus === "paid") {
+          await upsertCafeSaldoTransactionByOrderId(orderId, "online", order?.cafe_id || null);
+          if (order?.cafe_id != null) {
+            const { visitorId: vId, fingerprint: fp } = extractClientMetaForRiwayat(req);
+            await upsertRiwayatPembelian(orderId, order.cafe_id, vId, fp);
+          }
+        }
+
+        await syncOrderStatusFromMidtrans(orderId, paymentStatus, result);
+
         synced = 1;
       } catch (err) {
         console.error("[MIDTRANS][RETURN] sync error:", err);
+      }
+    } else {
+      const r = String(result || "").toLowerCase();
+      if (r === "unfinish" || r === "error") {
+        try {
+          await syncOrderStatusFromMidtrans(orderId, "pending", result);
+        } catch (e2) {
+          console.error("[MIDTRANS][RETURN] sync order status (no midtrans status):", e2);
+        }
       }
     }
 
@@ -226,6 +324,8 @@ const getOrderItems = async (orderId) => {
 exports.createTransaction = async (req, res) => {
   try {
     console.log("[MIDTRANS][CREATE] body:", req.body);
+
+    const { visitorId: metaVisitorId, fingerprint: metaFingerprint } = extractClientMetaForRiwayat(req);
 
     const existingOrderId = req.body.order_id ?? req.body.orderId;
     if (existingOrderId) {
@@ -280,6 +380,8 @@ exports.createTransaction = async (req, res) => {
            updated_at = CURRENT_TIMESTAMP`,
         [existingOrderId, existingOrder.cafe_id || null, JSON.stringify({ token: transaction.token, redirect_url: transaction.redirect_url })],
       );
+
+      await upsertRiwayatPembelian(existingOrderId, existingOrder.cafe_id, metaVisitorId, metaFingerprint);
 
       return res.json({
         order_id: existingOrderId,
@@ -415,6 +517,8 @@ exports.createTransaction = async (req, res) => {
       );
     }
 
+    await upsertRiwayatPembelian(orderId, cafeId, metaVisitorId, metaFingerprint);
+
     const parameter = {
       transaction_details: {
         order_id: orderId,
@@ -435,6 +539,18 @@ exports.createTransaction = async (req, res) => {
     }
 
     const transaction = await snap.createTransaction(parameter);
+
+    await queryAsync(
+      `INSERT INTO order_payments (order_id, cafe_id, provider, status, raw_json)
+       VALUES (?, ?, 'midtrans', 'pending', ?)
+       ON DUPLICATE KEY UPDATE
+         cafe_id = VALUES(cafe_id),
+         provider = 'midtrans',
+         status = 'pending',
+         raw_json = VALUES(raw_json),
+         updated_at = CURRENT_TIMESTAMP`,
+      [orderId, cafeId, JSON.stringify({ token: transaction.token, redirect_url: transaction.redirect_url })],
+    );
 
     return res.json({
       order_id: orderId,
@@ -494,6 +610,12 @@ exports.notification = async (req, res) => {
       ],
     );
 
+    if (mapped === "paid") {
+      await upsertCafeSaldoTransactionByOrderId(orderId, "online", order?.cafe_id || null);
+    }
+
+    await syncOrderStatusFromMidtrans(orderId, mapped, null);
+
     return res.status(200).json({ received: true, status: mapped });
   } catch (err) {
     console.error("[MIDTRANS][NOTIF] error:", err);
@@ -515,6 +637,12 @@ exports.checkStatus = async (req, res) => {
       local = rows && rows.length > 0 ? rows[0] : null;
     } catch (_) {
       local = null;
+    }
+
+    try {
+      await syncOrderStatusFromMidtrans(orderId, mapped, null);
+    } catch (_) {
+      /* ignore */
     }
 
     return res.json({

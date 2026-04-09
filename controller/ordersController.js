@@ -82,6 +82,19 @@ async function upsertOrderPaymentFromMidtransStatus(orderId, cafeId, midtransSta
   return mapped;
 };
 
+function upsertCafeSaldoTransaction(orderId, cafeId, amount, paymentMethod, callback) {
+  db.query(
+    `INSERT INTO cafe_saldo_transactions (cafe_id, order_id, amount, payment_method)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       cafe_id = VALUES(cafe_id),
+       amount = VALUES(amount),
+       payment_method = VALUES(payment_method)`,
+    [cafeId, orderId, Number(amount || 0), paymentMethod || null],
+    callback,
+  );
+}
+
 function generateOrderId() {
   const ts  = Date.now().toString(36).toUpperCase();
   const rnd = Math.random().toString(36).toUpperCase().slice(2, 6);
@@ -188,6 +201,58 @@ exports.adminGetMidtransBalance = (req, res) => {
         total_amount: Number(row.total_amount || 0),
         total_orders: Number(row.total_orders || 0),
       });
+    },
+  );
+};
+
+// GET /api/orders/admin/saldo
+exports.adminGetSaldo = (req, res) => {
+  const cafe_id = req.user?.cafe_id;
+  if (!cafe_id) return sendResponse(res, 401, "Unauthorized", null);
+
+  const limit = Math.min(Math.max(Number(req.query?.limit || 20), 1), 100);
+
+  db.query(
+    `SELECT
+       COALESCE(SUM(amount), 0) AS total_saldo,
+       COUNT(*) AS total_transaksi
+     FROM cafe_saldo_transactions
+     WHERE cafe_id = ?`,
+    [cafe_id],
+    (sumErr, sumRows) => {
+      if (sumErr) {
+        const pub = toPublicError(sumErr, "Gagal mengambil saldo cafe");
+        return sendResponse(res, pub.status, pub.message, null);
+      }
+
+      db.query(
+        `SELECT id, order_id, amount, payment_method, created_at
+         FROM cafe_saldo_transactions
+         WHERE cafe_id = ?
+         ORDER BY created_at DESC
+         LIMIT ?`,
+        [cafe_id, limit],
+        (listErr, txRows) => {
+          if (listErr) {
+            const pub = toPublicError(listErr, "Gagal mengambil riwayat saldo cafe");
+            return sendResponse(res, pub.status, pub.message, null);
+          }
+
+          const summary = sumRows && sumRows.length > 0 ? sumRows[0] : {};
+          return sendResponse(res, 200, "Berhasil mengambil saldo cafe", {
+            cafe_id,
+            total_saldo: Number(summary.total_saldo || 0),
+            total_transaksi: Number(summary.total_transaksi || 0),
+            transaksi: (txRows || []).map((row) => ({
+              id: Number(row.id),
+              order_id: row.order_id,
+              amount: Number(row.amount || 0),
+              payment_method: row.payment_method,
+              created_at: row.created_at,
+            })),
+          });
+        },
+      );
     },
   );
 };
@@ -338,7 +403,7 @@ exports.adminUpdateStatus = (req, res) => {
       }
 
       db.query(
-        `SELECT id, cafe_id, method FROM orders WHERE id = ? LIMIT 1`,
+        `SELECT id, cafe_id, method, total FROM orders WHERE id = ? LIMIT 1`,
         [id],
         async (mErr, orderRows) => {
           if (mErr) {
@@ -378,6 +443,21 @@ exports.adminUpdateStatus = (req, res) => {
               if (err2) {
                 const pub = toPublicError(err2, "Gagal update status");
                 return sendResponse(res, pub.status, pub.message, null);
+              }
+              if (status === "selesai") {
+                return upsertCafeSaldoTransaction(
+                  order.id,
+                  order.cafe_id,
+                  order.total,
+                  order.method,
+                  (saldoErr) => {
+                    if (saldoErr) {
+                      const pub = toPublicError(saldoErr, "Gagal mencatat saldo transaksi cafe");
+                      return sendResponse(res, pub.status, pub.message, null);
+                    }
+                    return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status });
+                  },
+                );
               }
               return sendResponse(res, 200, `Status diupdate ke '${status}'`, { id, status });
             },
@@ -679,7 +759,7 @@ exports.kasirUpdateStatus = (req, res) => {
       }
 
       db.query(
-        `SELECT id, cafe_id, method FROM orders WHERE id = ? LIMIT 1`,
+        `SELECT id, cafe_id, method, total FROM orders WHERE id = ? LIMIT 1`,
         [id],
         async (mErr, orderRows) => {
           if (mErr) {
@@ -725,6 +805,25 @@ exports.kasirUpdateStatus = (req, res) => {
               if (err2) {
                 const pub = toPublicError(err2, "Gagal update status");
                 return res.status(pub.status).json({ success: false, message: pub.message });
+              }
+              if (status === "selesai") {
+                return upsertCafeSaldoTransaction(
+                  order.id,
+                  order.cafe_id,
+                  order.total,
+                  order.method,
+                  (saldoErr) => {
+                    if (saldoErr) {
+                      const pub = toPublicError(saldoErr, "Gagal mencatat saldo transaksi cafe");
+                      return res.status(pub.status).json({ success: false, message: pub.message });
+                    }
+                    return res.status(200).json({
+                      success: true,
+                      message: `Status pesanan diupdate ke '${status}'`,
+                      data: { id, status },
+                    });
+                  },
+                );
               }
               return res.status(200).json({
                 success: true,

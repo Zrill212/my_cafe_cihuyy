@@ -1,6 +1,7 @@
 const express = require("express");
 const router = express.Router();
 const superAdminController = require("../controller/superAdminController");
+const withdrawalController = require("../controller/withdrawalController");
 const authSuperAdmin = require("../middleware/authSuperAdmin");
 
 // Login (public)
@@ -29,5 +30,10 @@ router.get("/analytics", authSuperAdmin, superAdminController.getAnalytics);
 // Settings (protected)
 router.get("/settings", authSuperAdmin, superAdminController.getSettings);
 router.put("/settings", authSuperAdmin, superAdminController.updateSettings);
+
+// Pencairan saldo cafe → transfer manual oleh superadmin
+router.get("/withdrawals", authSuperAdmin, withdrawalController.superAdminList);
+router.patch("/withdrawals/:id/complete", authSuperAdmin, withdrawalController.superAdminComplete);
+router.patch("/withdrawals/:id/reject", authSuperAdmin, withdrawalController.superAdminReject);
 
 module.exports = router;

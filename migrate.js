@@ -287,6 +287,50 @@ const MIGRATIONS = [
     `,
   },
   {
+    name: "cafe_saldo_transactions",
+    sql: `
+      CREATE TABLE IF NOT EXISTS cafe_saldo_transactions (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        cafe_id INT NOT NULL,
+        order_id VARCHAR(30) NOT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        payment_method VARCHAR(30) NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_cafe_saldo_order_id (order_id),
+        INDEX idx_cafe_saldo_cafe_id (cafe_id),
+        INDEX idx_cafe_saldo_created_at (created_at)
+      );
+    `,
+  },
+  {
+    name: "cafe_withdrawal_requests",
+    sql: `
+      CREATE TABLE IF NOT EXISTS cafe_withdrawal_requests (
+        id BIGINT PRIMARY KEY AUTO_INCREMENT,
+        client_ref VARCHAR(80) NULL,
+        cafe_id INT NOT NULL,
+        admin_id INT NULL,
+        amount DECIMAL(12,2) NOT NULL DEFAULT 0,
+        method VARCHAR(40) NOT NULL DEFAULT 'transfer_bank',
+        bank_name VARCHAR(100) NULL,
+        account_number VARCHAR(64) NULL,
+        account_holder VARCHAR(100) NULL,
+        status ENUM('pending','processing','completed','rejected') NOT NULL DEFAULT 'processing',
+        fingerprint VARCHAR(255) NULL,
+        note TEXT NULL,
+        superadmin_note TEXT NULL,
+        processed_by_superadmin_id INT NULL,
+        processed_at DATETIME NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uq_cafe_withdrawal_client_ref (cafe_id, client_ref),
+        INDEX idx_cafe_withdrawal_cafe (cafe_id),
+        INDEX idx_cafe_withdrawal_status (status),
+        INDEX idx_cafe_withdrawal_created (created_at)
+      );
+    `,
+  },
+  {
     name: "super_admins",
     sql: `
       CREATE TABLE IF NOT EXISTS super_admins (
@@ -465,6 +509,8 @@ const DROP_ORDER = [
   "subscription_transactions",
   "cafe_subscriptions",
   "subscription_plans",
+  "cafe_withdrawal_requests",
+  "cafe_saldo_transactions",
   "order_payments",
   "riwayat_pembelian",
   "order_items",

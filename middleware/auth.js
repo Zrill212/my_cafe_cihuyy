@@ -41,6 +41,7 @@ const verifyToken = (req, res, next) => {
 
     const url = String(req.originalUrl || "");
     if (url.startsWith("/api/subscriptions")) return next();
+    if (url.startsWith("/api/withdrawals")) return next();
 
     return checkSubscription(req, res, next);
   });

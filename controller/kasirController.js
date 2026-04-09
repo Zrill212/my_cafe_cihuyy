@@ -28,6 +28,18 @@ const omitPassword = (row) => {
   return safe;
 };
 
+const upsertCafeSaldoTransaction = async ({ cafeId, orderId, amount, paymentMethod }) => {
+  await query(
+    `INSERT INTO cafe_saldo_transactions (cafe_id, order_id, amount, payment_method)
+     VALUES (?, ?, ?, ?)
+     ON DUPLICATE KEY UPDATE
+       cafe_id = VALUES(cafe_id),
+       amount = VALUES(amount),
+       payment_method = VALUES(payment_method)`,
+    [cafeId, orderId, Number(amount || 0), paymentMethod || "tunai"],
+  );
+};
+
 const ensureKasirOrAdmin = (req, res) => {
   const role = req.user?.role;
   if (role !== "admin" && role !== "kasir") {
@@ -308,6 +320,14 @@ exports.payOrder = async (req, res) => {
   }
 
   try {
+    const orderRows = await query(
+      "SELECT id, cafe_id, total FROM orders WHERE id = ? AND cafe_id = ? LIMIT 1",
+      [orderId, cafeId],
+    );
+    const order = orderRows && orderRows.length > 0 ? orderRows[0] : null;
+    if (!order) {
+      return sendResponse(res, 404, "Order tidak ditemukan", []);
+    }
 
     const result = await query(
       "UPDATE orders SET method = ? WHERE id = ? AND cafe_id = ?",
@@ -331,6 +351,13 @@ exports.payOrder = async (req, res) => {
          updated_at = CURRENT_TIMESTAMP`,
       [orderId, cafeId, JSON.stringify({ paid_at: new Date().toISOString(), method })],
     );
+
+    await upsertCafeSaldoTransaction({
+      cafeId,
+      orderId,
+      amount: order.total,
+      paymentMethod: method,
+    });
 
     return sendResponse(res, 200, "Pembayaran berhasil", {
       order_id: orderId
