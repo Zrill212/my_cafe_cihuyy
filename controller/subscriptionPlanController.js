@@ -242,11 +242,53 @@ exports.deletePlan = async (req, res) => {
     const id = Number(req.params.id);
     if (!Number.isFinite(id) || id <= 0) return sendResponse(res, 400, "id tidak valid", null);
 
+    // Jika paket sudah dipakai, jangan hard delete (bisa kena foreign key).
+    let usage = { cafe_subscriptions: 0, subscription_transactions: 0 };
+    try {
+      const rows1 = await queryAsync(
+        "SELECT COUNT(1) AS cnt FROM cafe_subscriptions WHERE plan_id = ?",
+        [id],
+      );
+      usage.cafe_subscriptions = Number(rows1?.[0]?.cnt || 0);
+    } catch (_) {
+      usage.cafe_subscriptions = 0;
+    }
+    try {
+      const rows2 = await queryAsync(
+        "SELECT COUNT(1) AS cnt FROM subscription_transactions WHERE plan_id = ?",
+        [id],
+      );
+      usage.subscription_transactions = Number(rows2?.[0]?.cnt || 0);
+    } catch (_) {
+      usage.subscription_transactions = 0;
+    }
+
+    const isUsed = usage.cafe_subscriptions > 0 || usage.subscription_transactions > 0;
+    if (isUsed) {
+      const result = await queryAsync(
+        "UPDATE subscription_plans SET is_active = 0 WHERE id = ?",
+        [id],
+      );
+      if (!result || result.affectedRows === 0) {
+        return sendResponse(res, 404, "Paket tidak ditemukan", null);
+      }
+      return sendResponse(res, 200, "Paket sedang dipakai, jadi dinonaktifkan (tidak dihapus)", {
+        id,
+        action: "deactivated",
+        usage,
+      });
+    }
+
     const result = await queryAsync("DELETE FROM subscription_plans WHERE id = ?", [id]);
     if (!result || result.affectedRows === 0) return sendResponse(res, 404, "Paket tidak ditemukan", null);
 
-    return sendResponse(res, 200, "Paket langganan berhasil dihapus", { id });
+    return sendResponse(res, 200, "Paket langganan berhasil dihapus", { id, action: "deleted" });
   } catch (err) {
+    console.error("[SUBSCRIPTION_PLAN][DELETE] error:", {
+      code: err?.code,
+      message: err?.message,
+      sqlMessage: err?.sqlMessage,
+    });
     const pub = toPublicError(err, "Gagal hapus paket langganan");
     return sendResponse(res, pub.status, pub.message, null);
   }
