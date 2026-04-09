@@ -183,6 +183,72 @@ exports.listMine = async (req, res) => {
   }
 };
 
+/** Admin cafe: ambil saldo (untuk halaman pencairan) */
+exports.getBalance = async (req, res) => {
+  if (req.user?.role !== "admin") {
+    return sendResponse(res, 403, "Hanya admin cafe", null);
+  }
+
+  const cafeId = req.user.cafe_id;
+  const limit = Math.min(Math.max(Number(req.query.limit || 20), 1), 100);
+
+  try {
+    await ensureWithdrawalTable();
+
+    const incomeRows = await query(
+      `SELECT
+         COALESCE(SUM(amount), 0) AS total_saldo,
+         COUNT(*) AS total_transaksi
+       FROM cafe_saldo_transactions
+       WHERE cafe_id = ?`,
+      [cafeId],
+    );
+
+    const withdrawalRows = await query(
+      `SELECT
+         COALESCE(SUM(amount), 0) AS total_withdrawn
+       FROM cafe_withdrawal_requests
+       WHERE cafe_id = ?
+         AND status = 'completed'`,
+      [cafeId],
+    );
+
+    const txRows = await query(
+      `SELECT id, order_id, amount, payment_method, created_at
+       FROM cafe_saldo_transactions
+       WHERE cafe_id = ?
+       ORDER BY created_at DESC
+       LIMIT ?`,
+      [cafeId, limit],
+    );
+
+    const summary = incomeRows && incomeRows.length > 0 ? incomeRows[0] : {};
+    const wd = withdrawalRows && withdrawalRows.length > 0 ? withdrawalRows[0] : {};
+    const totalIncome = Number(summary.total_saldo || 0);
+    const totalWithdrawn = Number(wd.total_withdrawn || 0);
+    const availableSaldo = Math.max(totalIncome - totalWithdrawn, 0);
+
+    return sendResponse(res, 200, "Berhasil mengambil saldo cafe", {
+      cafe_id: cafeId,
+      total_saldo: availableSaldo,
+      total_income: totalIncome,
+      total_withdrawn: totalWithdrawn,
+      total_transaksi: Number(summary.total_transaksi || 0),
+      transaksi: (txRows || []).map((row) => ({
+        id: Number(row.id),
+        order_id: row.order_id,
+        amount: Number(row.amount || 0),
+        payment_method: row.payment_method,
+        created_at: row.created_at,
+      })),
+    });
+  } catch (err) {
+    console.error("[WITHDRAWAL][BALANCE] error:", err);
+    const pub = toPublicError(err, "Gagal mengambil saldo cafe");
+    return sendResponse(res, pub.status, pub.message, null);
+  }
+};
+
 /** Superadmin: semua pengajuan (filter status) */
 exports.superAdminList = async (req, res) => {
   const limit = Math.min(Math.max(Number(req.query.limit || 50), 1), 200);

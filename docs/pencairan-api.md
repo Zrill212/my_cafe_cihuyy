@@ -90,6 +90,46 @@ Contoh: `GET /api/withdrawals?limit=20&status=processing`
 
 ---
 
+## 2b. Admin Cafe — ambil saldo untuk halaman pencairan
+
+- **Method**: `GET`
+- **URL**: `/api/withdrawals/balance`
+- **Auth**: Bearer token admin cafe
+
+### Query
+
+| Param | Keterangan |
+|--------|------------|
+| `limit` | Opsional, default 20, max 100 |
+
+### Response sukses (200)
+
+```json
+{
+  "status": 200,
+  "message": "Berhasil mengambil saldo cafe",
+  "data": {
+    "cafe_id": 6,
+    "total_saldo": 275000,
+    "total_transaksi": 4,
+    "transaksi": [
+      {
+        "id": 12,
+        "order_id": "ORD-ABC123",
+        "amount": 75000,
+        "payment_method": "online",
+        "created_at": "2026-04-09T03:10:22.000Z"
+      }
+    ]
+  },
+  "success": true
+}
+```
+
+Catatan: endpoint ini **tidak membutuhkan** `cafe_id`/`meja` dari FE karena diambil dari token JWT admin.
+
+---
+
 ## 3. Superadmin — daftar semua pengajuan
 
 - **Method**: `GET`
