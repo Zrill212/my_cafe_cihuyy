@@ -66,12 +66,13 @@ const normalizeDeliveryFromPayload = (body = {}, mappedStatus = null) => {
     String(deliveredFlag || "").trim().toLowerCase() === "true" ||
     String(deliveredFlag || "").trim() === "1";
 
-  const isDelivered =
-    deliveredFromFlag ||
-    normalizedDelivery === "diantar" ||
-    mappedStatus === "selesai";
+  // Penting: pembayaran sukses hanya membuat status order "selesai",
+  // tapi belum otomatis "diantar". "diantar" harus eksplisit dari aksi FE.
+  const isDelivered = deliveredFromFlag || normalizedDelivery === "diantar";
 
-  const deliveryStatus = isDelivered ? "diantar" : "siap";
+  const deliveryStatus = isDelivered
+    ? "diantar"
+    : (mappedStatus === "selesai" ? "siap" : "proses");
   return {
     delivery_status: deliveryStatus,
     status_pengantaran: deliveryStatus,

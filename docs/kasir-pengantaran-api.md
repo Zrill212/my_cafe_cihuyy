@@ -42,6 +42,14 @@ Aturan mapping:
 
 Status internal yang dipakai endpoint ini: `proses`, `selesai`, `siap`, `lunas`.
 
+## Aturan Tab Pengantaran (Penting)
+
+Backend sekarang memisahkan status pembayaran/order dan status pengantaran:
+
+- Pembayaran berhasil (tunai/online) boleh membuat order `status = selesai`, **tetapi belum otomatis `diantar`**.
+- Setelah pembayaran sukses, order masuk tab **Siap Diantar** (`delivery_status = "siap"`).
+- Order baru masuk tab **Sudah Diantar** jika kasir menekan tombol tandai selesai pengantaran (kirim `is_delivered=true` atau `delivery_status/status_pengantaran="diantar"`).
+
 ## Response Sukses (contoh)
 
 Status: `200 OK`
@@ -119,4 +127,5 @@ Jika payload tidak bisa dipetakan ke status valid.
 2. FE tidak perlu kirim `status` bila sudah mengirim field pengantaran di atas.
 3. Setelah sukses, refresh list order agar card berpindah tab sesuai status terbaru.
 4. Backend sekarang juga menyimpan flag pengantaran di order (`delivery_status`, `is_delivered`) sehingga FE bisa memisahkan tab **Siap Diantar** vs **Sudah Diantar** langsung dari response order.
+5. Jangan langsung memindahkan ke tab **Sudah Diantar** hanya karena `status` order sudah `selesai`; gunakan indikator pengantaran (`delivery_status` / `is_delivered`) sebagai sumber kebenaran tab.
 
