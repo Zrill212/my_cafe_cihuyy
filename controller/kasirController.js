@@ -352,13 +352,6 @@ exports.payOrder = async (req, res) => {
       [orderId, cafeId, JSON.stringify({ paid_at: new Date().toISOString(), method })],
     );
 
-    await upsertCafeSaldoTransaction({
-      cafeId,
-      orderId,
-      amount: order.total,
-      paymentMethod: method,
-    });
-
     return sendResponse(res, 200, "Pembayaran berhasil", {
       order_id: orderId
     });

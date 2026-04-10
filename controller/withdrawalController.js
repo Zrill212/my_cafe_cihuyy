@@ -63,7 +63,8 @@ const backfillCafeSaldoTransactionsFromOrders = async (cafeId) => {
        o.created_at
      FROM orders o
      WHERE o.cafe_id = ?
-       AND o.status = 'selesai'`,
+       AND o.status = 'selesai'
+       AND LOWER(o.method) = 'online'`,
     [cafeId],
   );
 };

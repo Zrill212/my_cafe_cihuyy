@@ -343,29 +343,21 @@ exports.kasirCreate = (req, res) => {
                     return sendResponse(res, pub.status, pub.message, null);
                   }
 
-                  // Catat saldo cafe (idempotent via unique order_id)
-                  return upsertCafeSaldoTransaction(orderId, cafe_id, total, "kasir", (sErr) => {
-                    if (sErr) {
-                      const pub = toPublicError(sErr, "Gagal mencatat saldo transaksi cafe");
-                      return sendResponse(res, pub.status, pub.message, null);
-                    }
-
-                    return sendResponse(res, 201, "Pesanan kasir berhasil dibuat", {
-                      id: orderId,
-                      status: "selesai",
-                      delivery_status: "siap",
-                      status_pengantaran: "siap",
-                      is_delivered: false,
-                      meja: mejaFinal,
-                      nama: namaFinal,
-                      total: Number(total),
-                      items: pricedItems.map((it) => ({
-                        menu_id: it.menu_id,
-                        name: it.name,
-                        qty: it.qty,
-                        price: it.price,
-                      })),
-                    });
+                  return sendResponse(res, 201, "Pesanan kasir berhasil dibuat", {
+                    id: orderId,
+                    status: "selesai",
+                    delivery_status: "siap",
+                    status_pengantaran: "siap",
+                    is_delivered: false,
+                    meja: mejaFinal,
+                    nama: namaFinal,
+                    total: Number(total),
+                    items: pricedItems.map((it) => ({
+                      menu_id: it.menu_id,
+                      name: it.name,
+                      qty: it.qty,
+                      price: it.price,
+                    })),
                   });
                 },
               );
