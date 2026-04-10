@@ -16,6 +16,7 @@ router.delete("/admin/:id",        auth, OrderCtrl.adminDelete);
 /* ── KASIR (butuh JWT) ───────────────────────────────────────────────────── */
 // Pakai prefix /kasir/ agar tidak bentrok dengan GET /:id/status milik user
 router.get("/kasir",              auth, OrderCtrl.kasirGetList);
+router.post("/kasir",             auth, OrderCtrl.kasirCreate);
 router.patch("/kasir/:id/status",  auth, OrderCtrl.kasirUpdateStatus);
 
 /* ── USER / PELANGGAN (publik) ───────────────────────────────────────────── */

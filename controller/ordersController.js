@@ -245,6 +245,151 @@ function fetchItems(orderId, cafeId, callback) {
   });
 }
 
+// POST /api/orders/kasir
+// Buat order dari terminal kasir (pembayaran tunai/langsung dianggap paid).
+exports.kasirCreate = (req, res) => {
+  const cafe_id = req.user?.cafe_id;
+  if (!cafe_id) return sendResponse(res, 401, "Unauthorized", null);
+
+  const {
+    meja,
+    table_number,
+    nama,
+    customer_name,
+    note = "",
+    items = [],
+    payment_method = "kasir",
+  } = req.body || {};
+
+  const mejaFinal = meja ?? table_number;
+  const namaFinal = nama ?? customer_name ?? "";
+
+  if (!mejaFinal) return sendResponse(res, 400, "meja/table_number wajib diisi", null);
+  if (!Array.isArray(items) || items.length === 0) return sendResponse(res, 400, "items minimal 1", null);
+
+  const normalizedItems = items
+    .map((it) => ({
+      menu_id: Number(it.menu_id ?? it.id ?? it.menuId),
+      qty: Number(it.qty ?? it.quantity ?? 1),
+      note: it.note ?? it.catatan ?? "",
+    }))
+    .filter((it) => Number.isFinite(it.menu_id) && it.menu_id > 0 && Number.isFinite(it.qty) && it.qty > 0);
+
+  if (normalizedItems.length === 0) return sendResponse(res, 400, "menu_id/qty tidak valid", null);
+
+  const orderId = generateOrderId();
+
+  const menuIds = Array.from(new Set(normalizedItems.map((it) => it.menu_id)));
+  const placeholders = menuIds.map(() => "?").join(",");
+
+  db.query(
+    `SELECT id, nama_menu, harga FROM menus WHERE cafe_id = ? AND id IN (${placeholders})`,
+    [cafe_id, ...menuIds],
+    (mErr, menuRows) => {
+      if (mErr) {
+        const pub = toPublicError(mErr, "Gagal mengambil data menu");
+        return sendResponse(res, pub.status, pub.message, null);
+      }
+
+      const menuMap = new Map((menuRows || []).map((m) => [Number(m.id), m]));
+      const missing = menuIds.filter((id) => !menuMap.has(id));
+      if (missing.length) return sendResponse(res, 422, `menu_id tidak valid: ${missing.join(",")}`, null);
+
+      const pricedItems = normalizedItems.map((it) => {
+        const m = menuMap.get(it.menu_id);
+        const price = Number(m?.harga ?? 0);
+        return {
+          menu_id: it.menu_id,
+          name: m?.nama_menu ?? "",
+          qty: it.qty,
+          price,
+          note: it.note ?? "",
+        };
+      });
+
+      const total = pricedItems.reduce((sum, it) => sum + it.price * it.qty, 0);
+
+      // Pembayaran sukses => status order selesai, tapi pengantaran default "siap" sampai ditandai selesai.
+      db.query(
+        `INSERT INTO orders (id, cafe_id, meja, nama, status, total, note, method, delivery_status, is_delivered, estimasi)
+         VALUES (?, ?, ?, ?, 'selesai', ?, ?, 'kasir', 'siap', 0, '15 mnt')`,
+        [orderId, cafe_id, mejaFinal, namaFinal, Number(total), note || ""],
+        (oErr) => {
+          if (oErr) {
+            const pub = toPublicError(oErr, "Gagal membuat pesanan kasir");
+            return sendResponse(res, pub.status, pub.message, null);
+          }
+
+          // Insert order_items
+          let idx = 0;
+          const insertNext = () => {
+            if (idx >= pricedItems.length) {
+              // Simpan pembayaran kasir paid
+              return db.query(
+                `INSERT INTO order_payments
+                 (order_id, cafe_id, provider, status, transaction_status, raw_json)
+                 VALUES (?, ?, 'kasir', 'paid', 'paid', ?)
+                 ON DUPLICATE KEY UPDATE
+                   cafe_id = VALUES(cafe_id),
+                   provider = 'kasir',
+                   status = 'paid',
+                   transaction_status = 'paid',
+                   raw_json = VALUES(raw_json),
+                   updated_at = CURRENT_TIMESTAMP`,
+                [orderId, cafe_id, JSON.stringify({ paid_at: new Date().toISOString(), method: payment_method })],
+                (pErr) => {
+                  if (pErr) {
+                    const pub = toPublicError(pErr, "Gagal menyimpan pembayaran kasir");
+                    return sendResponse(res, pub.status, pub.message, null);
+                  }
+
+                  // Catat saldo cafe (idempotent via unique order_id)
+                  return upsertCafeSaldoTransaction(orderId, cafe_id, total, "kasir", (sErr) => {
+                    if (sErr) {
+                      const pub = toPublicError(sErr, "Gagal mencatat saldo transaksi cafe");
+                      return sendResponse(res, pub.status, pub.message, null);
+                    }
+
+                    return sendResponse(res, 201, "Pesanan kasir berhasil dibuat", {
+                      id: orderId,
+                      status: "selesai",
+                      delivery_status: "siap",
+                      status_pengantaran: "siap",
+                      is_delivered: false,
+                      meja: mejaFinal,
+                      nama: namaFinal,
+                      total: Number(total),
+                      items: pricedItems.map((it) => ({
+                        menu_id: it.menu_id,
+                        name: it.name,
+                        qty: it.qty,
+                        price: it.price,
+                      })),
+                    });
+                  });
+                },
+              );
+            }
+
+            const it = pricedItems[idx++];
+            db.query(
+              `INSERT INTO order_items (order_id, nama_menu, qty, harga, catatan)
+               VALUES (?, ?, ?, ?, ?)`,
+              [orderId, it.name, it.qty, it.price, it.note || ""],
+              (iErr) => {
+                if (iErr) console.error("[KASIR_CREATE] insert item error:", iErr);
+                return setImmediate(insertNext);
+              },
+            );
+          };
+
+          insertNext();
+        },
+      );
+    },
+  );
+};
+
 /* ══════════════════════════════════════════════════════════════════════════
    ADMIN
    ══════════════════════════════════════════════════════════════════════════ */
