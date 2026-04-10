@@ -9,14 +9,14 @@ Dokumentasi ini dipakai FE untuk membuat transaksi Snap Midtrans dan memastikan 
 - **Auth**: Tidak wajib JWT
 - **Middleware**: **`clientIdentity`** — baca cookie `visitor_id` dan/atau header **`x-fingerprint`** / body `fingerprint`
 
-## Header yang Disarankan
+## Request Headers
 
 | Header | Keterangan |
 |--------|------------|
 | `Content-Type` | `application/json` |
 | `x-fingerprint` | String ID perangkat (wajib konsisten dengan pemanggilan `GET /api/client/riwayat-pembelian`) |
 
-## Body — dua skenario
+## Request Body (2 skenario)
 
 ### A. Snap untuk order yang sudah ada
 
@@ -103,6 +103,8 @@ Gunakan `snap_token` di frontend Snap.js atau buka `redirect_url` sesuai integra
   "error": "Terjadi masalah saat membuat transaksi"
 }
 ```
+
+> Catatan: beberapa endpoint Midtrans di backend ini masih mengembalikan format error ringkas (`error`, `reason`) dan belum selalu memakai wrapper `status/message/data/success`.
 
 ## Endpoint Terkait
 

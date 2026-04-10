@@ -14,7 +14,7 @@ Daftar dokumentasi endpoint untuk tim frontend.
   Update status pengantaran kasir dengan payload FE (`delivery_status`, `status_pengantaran`, `is_delivered`).
 
 - `docs/kasir-buat-pesanan-api.md`  
-  Kontrak endpoint kasir untuk membuat pesanan langsung dari terminal kasir.
+  Kontrak endpoint kasir untuk membuat pesanan langsung dari terminal kasir (menu_id based).
 
 ## Saldo & Pencairan
 
@@ -39,6 +39,7 @@ Daftar dokumentasi endpoint untuk tim frontend.
 - Untuk endpoint protected, kirim `Authorization: Bearer <token>`.
 - Setelah aksi `PATCH/POST/DELETE`, selalu refetch list/summary agar UI sinkron dengan server.
 - Untuk flow pelanggan (riwayat + checkout online), pastikan `fingerprint` konsisten antar request.
+- Jika menemukan endpoint lama yang return format `{ error: ... }`, normalisasi dulu di FE service layer agar tetap konsisten ke model UI (`message`, `success`).
 
 ---
 

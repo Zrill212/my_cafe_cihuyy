@@ -1,6 +1,6 @@
 # API Docs - Kasir Buat Pesanan
 
-Dokumentasi ini untuk kebutuhan fitur kasir membuat pesanan langsung dari halaman kasir.
+Dokumentasi ini untuk fitur kasir membuat pesanan langsung dari halaman kasir.
 
 ## Endpoint
 
@@ -14,29 +14,41 @@ Contoh:
 
 ## Body Request (JSON)
 
+Backend saat ini menerima item berbasis menu (`menu_id`).
+
 ```json
 {
   "table_number": 12,
   "customer_name": "Budi",
   "note": "Tanpa es",
+  "payment_method": "kasir",
   "items": [
     {
       "menu_id": 101,
       "qty": 2,
-      "note": "Pedas level 2",
-      "variants": []
+      "note": "Pedas level 2"
     }
-  ],
-  "payment_method": "kasir"
+  ]
 }
 ```
 
-## Validasi Minimum (Backend)
+## Field yang Didukung
 
-- `table_number` wajib.
-- `items` wajib, minimal 1 item.
-- Tiap item wajib punya `menu_id` dan `qty >= 1`.
-- `variants` saat ini **diabaikan** oleh backend endpoint ini (disimpan sebagai order item biasa).
+- `table_number` atau `meja` (wajib)
+- `customer_name` atau `nama` (opsional)
+- `note` (opsional)
+- `payment_method` (opsional, default `kasir`)
+- `items` (wajib, minimal 1 item)
+  - `menu_id` atau `id`
+  - `qty` atau `quantity`
+  - `note` / `catatan` (opsional)
+
+## Validasi Backend
+
+- Meja wajib diisi.
+- `items` minimal 1.
+- `menu_id` harus valid pada cafe kasir yang login.
+- `qty` harus angka > 0.
 
 ## Response Sukses (contoh)
 
@@ -69,8 +81,10 @@ Status: `201 Created`
 
 ```json
 {
-  "success": false,
-  "message": "items minimal 1"
+  "status": 400,
+  "message": "items minimal 1",
+  "data": null,
+  "success": false
 }
 ```
 
@@ -78,8 +92,10 @@ Status: `201 Created`
 
 ```json
 {
-  "success": false,
-  "message": "Unauthorized"
+  "status": 401,
+  "message": "Unauthorized",
+  "data": null,
+  "success": false
 }
 ```
 
@@ -87,16 +103,18 @@ Status: `201 Created`
 
 ```json
 {
-  "success": false,
-  "message": "menu_id tidak valid"
+  "status": 422,
+  "message": "menu_id tidak valid: 101",
+  "data": null,
+  "success": false
 }
 ```
 
 ## Catatan Integrasi FE
 
-1. Setelah `POST` sukses, FE kasir perlu refetch list `GET /api/orders/kasir?status=aktif` (atau endpoint list yang dipakai) agar order baru langsung muncul.
-2. Pembayaran kasir dianggap **sukses/paid**, sehingga:
-   - `status = selesai`
-   - `delivery_status = siap` (belum otomatis `diantar`)
+1. Setelah `POST` sukses, langsung refetch list kasir (mis. `GET /api/orders/kasir?status=aktif`) agar order baru muncul.
+2. Order kasir baru dibuat dengan:
+   - `status = selesai` (pembayaran dianggap sukses)
+   - `delivery_status = siap`
    - `is_delivered = false`
-3. Order baru pindah ke **Sudah Diantar** hanya setelah kasir memanggil endpoint tandai pengantaran (`PATCH /api/orders/kasir/:id/status` dengan `is_delivered=true` atau `delivery_status=\"diantar\"`).
+3. Pindah ke tab **Sudah Diantar** hanya setelah update pengantaran (`PATCH /api/orders/kasir/:id/status` dengan `is_delivered=true` atau `delivery_status="diantar"`).

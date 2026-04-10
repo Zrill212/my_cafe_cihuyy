@@ -32,7 +32,8 @@ Status: `200 OK`
   "data": {
     "id": 3,
     "action": "deleted"
-  }
+  },
+  "success": true
 }
 ```
 
@@ -51,7 +52,8 @@ Status: `200 OK`
       "cafe_subscriptions": 2,
       "subscription_transactions": 10
     }
-  }
+  },
+  "success": true
 }
 ```
 
@@ -63,7 +65,8 @@ Status: `200 OK`
 {
   "status": 400,
   "message": "id tidak valid",
-  "data": null
+  "data": null,
+  "success": false
 }
 ```
 
@@ -73,7 +76,8 @@ Status: `200 OK`
 {
   "status": 404,
   "message": "Paket tidak ditemukan",
-  "data": null
+  "data": null,
+  "success": false
 }
 ```
 
@@ -83,7 +87,8 @@ Status: `200 OK`
 {
   "status": 500,
   "message": "Gagal hapus paket langganan",
-  "data": null
+  "data": null,
+  "success": false
 }
 ```
 
